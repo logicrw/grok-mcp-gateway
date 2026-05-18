@@ -74,6 +74,25 @@ actions such as account or posting workflows. Keep this gateway for local Grok
 model access and OAuth-backed X Search that non-Grok agents can call through
 their MCP tool layer.
 
+## What This Is / Is Not
+
+This project is:
+
+- a local OpenAI-compatible gateway for Grok model calls through Hermes-derived
+  xAI OAuth;
+- a resident HTTP MCP server that exposes one focused `x_search` tool;
+- a shared local process for Alma, Codex, Claude Code, Gemini CLI, Antigravity,
+  LiteLLM, and similar agent clients.
+
+This project is not:
+
+- a general MCP router, MCP marketplace, or remote-tool aggregator;
+- a replacement for the official X API MCP server when you need posting,
+  account management, or broader X API actions;
+- a Node.js, npm, Express, Docker, or Heroku template;
+- a way to make every model natively X-aware. Non-Grok models can search X only
+  when their client chooses to call the exposed MCP tool.
+
 ## Core Features
 
 **Grok model gateway**

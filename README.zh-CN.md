@@ -71,6 +71,25 @@ Responses API 暴露一个聚焦的 MCP 工具 `x_search`。
 项目同时运行。本项目的定位是本地 Grok 模型接入，以及让非 Grok Agent 通过
 MCP 工具层调用 OAuth-backed X Search。
 
+## 是什么 / 不是什么
+
+这个项目是：
+
+- 一个本地 OpenAI-compatible Grok gateway，通过 Hermes 派生的 xAI OAuth
+  调用 Grok 模型；
+- 一个常驻 HTTP MCP server，暴露聚焦的 `x_search` 工具；
+- 一个可被 Alma、Codex、Claude Code、Gemini CLI、Antigravity、LiteLLM
+  等本地 Agent 客户端共享的进程。
+
+这个项目不是：
+
+- 通用 MCP router、MCP marketplace，或远程工具聚合器；
+- 官方 X API MCP server 的替代品。如果你需要发帖、账号管理或更完整的 X API
+  操作，应同时运行官方 X MCP；
+- Node.js、npm、Express、Docker 或 Heroku 模板；
+- 让所有模型“原生懂 X”的魔法。非 Grok 模型只有在客户端主动调用 MCP 工具时
+  才能搜索 X。
+
 ## 核心能力
 
 **Grok 模型 gateway**
