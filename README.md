@@ -1,7 +1,17 @@
-![Grok OAuth Proxy cover](./images/grok-oauth-proxy-cover.svg)
+```mermaid
+---
+config:
+  theme: neutral
+---
+flowchart LR
+    Clients["AI clients<br/>Alma / Codex / Claude Code / Gemini CLI"] -->|"OpenAI-compatible /v1"| Gateway["Grok MCP Gateway<br/>127.0.0.1:9996"]
+    Clients -->|"HTTP MCP /mcp"| Gateway
+    Gateway -->|"Hermes xAI OAuth"| Grok["xAI API<br/>Grok models"]
+    Gateway -->|"Responses API + x_search"| Search["X Search<br/>dates + handles"]
+```
 
 <p align="center">
-  <a href="https://github.com/logicrw/grok-oauth-proxy">GitHub</a> ·
+  <a href="https://github.com/logicrw/grok-mcp-gateway">GitHub</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#mcp-x-search">MCP X Search</a> ·
   <a href="#headless-server">Headless server</a>
@@ -13,10 +23,10 @@
 </p>
 
 <p align="center">
-  <strong>A local Grok OAuth gateway for multi-agent AI clients.</strong>
+  <strong>A local Grok and X Search gateway for multi-agent AI clients.</strong>
 </p>
 
-Grok OAuth Proxy turns a Hermes Agent xAI OAuth session into a local gateway
+Grok MCP Gateway turns a Hermes Agent xAI OAuth session into a local gateway
 that AI clients can use in two ways:
 
 1. **Model access:** call Grok through an OpenAI-compatible API without a
@@ -45,35 +55,24 @@ solves the credential problem, but most local AI clients still need:
 - a single resident process that several local agents can share;
 - token isolation so the proxy does not race Hermes while refreshing OAuth.
 
-Grok OAuth Proxy provides that layer.
-
-```text
-AI client provider config
-        |
-        | OpenAI-compatible API
-        v
-http://127.0.0.1:9996/v1/*
-        |
-        | Hermes-derived xAI OAuth bearer token
-        v
-https://api.x.ai/v1/*
-```
-
-```text
-MCP-capable clients and agents
-        |
-        | HTTP MCP JSON-RPC
-        v
-http://127.0.0.1:9996/mcp
-        |
-        | xAI Responses API + x_search tool
-        v
-https://api.x.ai/v1/responses
-```
+Grok MCP Gateway provides that layer.
 
 Important boundary: non-Grok models do not become natively X-aware. Their client
 calls this proxy's MCP `x_search` tool, and the proxy performs the search
 through xAI using your local OAuth session.
+
+## Relationship to Official X MCP
+
+[X's official MCP documentation](https://docs.x.com/tools/mcp) describes two
+different surfaces: the X API MCP server for X API actions and the X Docs MCP
+server for querying documentation. Grok MCP Gateway is narrower: it keeps the
+Hermes/xAI OAuth model gateway and exposes one focused MCP tool, `x_search`,
+through the xAI Responses API.
+
+Run the official X MCP server alongside this gateway if you need broader X API
+actions such as account or posting workflows. Keep this gateway for local Grok
+model access and OAuth-backed X Search that non-Grok agents can call through
+their MCP tool layer.
 
 ## Core Features
 
@@ -133,8 +132,8 @@ If it prints `False`, run Hermes Agent's xAI Grok OAuth flow first.
 ### 2. Install
 
 ```bash
-git clone https://github.com/logicrw/grok-oauth-proxy.git
-cd grok-oauth-proxy
+git clone https://github.com/logicrw/grok-mcp-gateway.git
+cd grok-mcp-gateway
 ./install.sh
 ```
 
@@ -179,7 +178,7 @@ curl -sS http://127.0.0.1:9996/v1/chat/completions \
 Use this when you want Alma to call Grok as a model.
 
 ```text
-Provider Name: Grok OAuth Proxy
+Provider Name: Grok MCP Gateway
 Base URL:      http://127.0.0.1:9996/v1
 API Key:       dummy
 API Format:    Chat Completions (/chat/completions)
@@ -332,8 +331,8 @@ Recommended split-chain flow:
 Install on the server:
 
 ```bash
-git clone https://github.com/logicrw/grok-oauth-proxy.git
-cd grok-oauth-proxy
+git clone https://github.com/logicrw/grok-mcp-gateway.git
+cd grok-mcp-gateway
 ./install.sh --headless
 ```
 
@@ -346,7 +345,7 @@ Install and enable systemd:
 Export xAI OAuth from the browser machine:
 
 ```bash
-cd grok-oauth-proxy
+cd grok-mcp-gateway
 python scripts/export_xai_oauth.py > ~/xai-oauth.json
 ```
 
@@ -358,7 +357,7 @@ python scripts/import_xai_oauth.py /tmp/xai-oauth.json
 rm -f /tmp/xai-oauth.json
 chmod 700 ~/.hermes
 chmod 600 ~/.hermes/auth.json
-sudo systemctl restart grok-oauth-proxy
+sudo systemctl restart grok-mcp-gateway
 ```
 
 One-step remote refresh:
@@ -377,12 +376,12 @@ it, and delete it after import.
 
 ### macOS LaunchAgent
 
-macOS service notes live in [services/README.md](services/README.md).
+macOS service notes live in [services/service-examples.md](services/service-examples.md).
 
 After code or environment changes:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/io.logicrw.grok-oauth-proxy
+launchctl kickstart -k gui/$(id -u)/io.logicrw.grok-mcp-gateway
 ```
 
 ### systemd
@@ -391,17 +390,17 @@ Example unit:
 
 ```ini
 [Unit]
-Description=Grok OAuth Proxy for Hermes
+Description=Grok MCP Gateway for Hermes
 After=network.target
 
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/home/youruser/grok-oauth-proxy
+WorkingDirectory=/home/youruser/grok-mcp-gateway
 Environment=HOME=/home/youruser
 Environment=HERMES_AUTH_PATH=/home/youruser/.hermes/auth.json
-Environment=PATH=/home/youruser/grok-oauth-proxy/.venv/bin:/home/youruser/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/youruser/grok-oauth-proxy/.venv/bin/python main.py
+Environment=PATH=/home/youruser/grok-mcp-gateway/.venv/bin:/home/youruser/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/youruser/grok-mcp-gateway/.venv/bin/python main.py
 Restart=always
 RestartSec=5
 
@@ -411,7 +410,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now grok-oauth-proxy
+sudo systemctl enable --now grok-mcp-gateway
 ```
 
 ## Configuration
@@ -429,11 +428,15 @@ sudo systemctl enable --now grok-oauth-proxy
 | `UPSTREAM_RETRY_ATTEMPTS` | `2` | Retry attempts for idempotent upstream requests and transient connection errors. |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | Base delay between upstream retries. |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | Default xAI model used by MCP `x_search`. |
+| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Max concurrent MCP `x_search` calls. |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | Inject xAI `x_search` into `/v1/responses` requests. |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | unset | Comma-separated handle allowlist for auto-injected X Search. |
 | `GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING` | `false` | Enable image understanding for auto-injected X Search. |
 | `GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING` | `false` | Enable video understanding for auto-injected X Search. |
+
+The `GROK_PROXY_*` environment prefix and the default token-state path are kept
+for upgrade compatibility with earlier installs.
 
 ## Local Endpoints
 
@@ -488,6 +491,7 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_search
 
 Common causes:
 
+- `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` does not include `x_search`.
 - xAI OAuth needs Hermes re-authentication.
 - The account does not have access to the requested model or X Search feature.
 - `allowed_x_handles` is too restrictive.

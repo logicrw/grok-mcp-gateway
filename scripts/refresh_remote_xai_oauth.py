@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Refresh xAI Grok OAuth credentials on a remote grok-oauth-proxy host.
+"""Refresh xAI Grok OAuth credentials on a remote Grok MCP Gateway host.
 
 This helper exports only the local Hermes `xai-oauth` provider, copies it to a
-remote/headless grok-oauth-proxy host, imports it there, removes stale proxy
+remote/headless Grok MCP Gateway host, imports it there, removes stale proxy
 token state through `import_xai_oauth.py`, restarts the service, and optionally
 runs a health check.
 
@@ -57,12 +57,12 @@ def scp_base(args: argparse.Namespace) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refresh remote grok-oauth-proxy OAuth credentials.")
+    parser = argparse.ArgumentParser(description="Refresh remote Grok MCP Gateway OAuth credentials.")
     parser.add_argument("--host", required=True, help="Remote SSH target, e.g. user@example.com")
     parser.add_argument("--identity", help="SSH private key path")
     parser.add_argument("--port", type=int, help="SSH port")
-    parser.add_argument("--remote-dir", default="/opt/grok-oauth-proxy", help="Remote grok-oauth-proxy directory")
-    parser.add_argument("--service", default="grok-oauth-proxy", help="systemd service name")
+    parser.add_argument("--remote-dir", default="/opt/grok-mcp-gateway", help="Remote Grok MCP Gateway directory")
+    parser.add_argument("--service", default="grok-mcp-gateway", help="systemd service name")
     parser.add_argument("--health-url", default="http://127.0.0.1:9996/health?deep=1")
     parser.add_argument("--no-restart", action="store_true", help="Import credentials but do not restart systemd service")
     parser.add_argument("--no-health", action="store_true", help="Skip remote health check")

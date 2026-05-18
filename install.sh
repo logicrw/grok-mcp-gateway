@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh - Grok OAuth Proxy installer
+# install.sh - Grok MCP Gateway installer
 #
 # Usage:
 #   ./install.sh                          # Desktop mode
@@ -21,8 +21,8 @@ EXPORT_FILE="${XAI_OAUTH_EXPORT_FILE:-$DEFAULT_EXPORT_FILE}"
 VENV_DIR=".venv"
 PYTHON="${PYTHON:-python3}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_NAME="grok-oauth-proxy"
-SYSTEMD_SERVICE_FILE="$REPO_ROOT/services/grok-oauth-proxy.service"
+SERVICE_NAME="grok-mcp-gateway"
+SYSTEMD_SERVICE_FILE="$REPO_ROOT/services/grok-mcp-gateway.service"
 
 # -----------------------------
 # Argument Parsing
@@ -66,7 +66,7 @@ done
 # -----------------------------
 print_header() {
     echo "=========================================="
-    echo "  Grok OAuth Proxy Installer"
+    echo "  Grok MCP Gateway Installer"
     echo "=========================================="
 }
 
@@ -102,8 +102,8 @@ if $HEADLESS; then
         echo ""
         echo "Please run the following on your desktop machine first:"
         echo ""
-        echo "  git clone https://github.com/yelixir-dev/grok-oauth-proxy.git"
-        echo "  cd grok-oauth-proxy"
+        echo "  git clone https://github.com/logicrw/grok-mcp-gateway.git"
+        echo "  cd grok-mcp-gateway"
         echo "  python scripts/export_xai_oauth.py > ~/xai-oauth.json"
         echo ""
         echo "Then copy the file to this server:"
@@ -156,7 +156,7 @@ if $ENABLE_SERVICE; then
 
     if ! command -v systemctl >/dev/null 2>&1; then
         echo "ERROR: --enable-service requires systemd/systemctl."
-        echo "On macOS, use the LaunchAgent example in services/README.md instead."
+        echo "On macOS, use the LaunchAgent example in services/service-examples.md instead."
         exit 1
     fi
 

@@ -1,4 +1,4 @@
-# Systemd service template for grok-oauth-proxy on Linux (headless server)
+# Systemd service template for Grok MCP Gateway on Linux (headless server)
 #
 # Prefer installing through:
 #   ./install.sh --enable-service
@@ -6,10 +6,10 @@
 #   ./install.sh --headless --enable-service
 #
 # The installer renders the __PLACEHOLDER__ values below before copying this
-# unit to /etc/systemd/system/grok-oauth-proxy.service.
+# unit to /etc/systemd/system/grok-mcp-gateway.service.
 
 [Unit]
-Description=Grok OAuth Proxy (Hermes xAI)
+Description=Grok MCP Gateway (Hermes xAI)
 After=network.target
 
 [Service]

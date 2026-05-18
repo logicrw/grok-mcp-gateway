@@ -1,4 +1,4 @@
-"""Grok OAuth Proxy — local reverse proxy to api.x.ai using Hermes xAI OAuth tokens.
+"""Grok MCP Gateway — local reverse proxy to api.x.ai using Hermes xAI OAuth tokens.
 
 Runs independently on a local port (default 9996, scans upward if taken).
 Features: token prewarm, Hermes auth.json watch, deep health, request logging,
@@ -113,7 +113,7 @@ def _prepare_forward_headers(incoming_headers: Mapping[str, str], auth_headers: 
         forwarded[key] = value
 
     forwarded.update(auth_headers)
-    forwarded.setdefault("user-agent", "grok-oauth-proxy/0.2")
+    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.3")
     return forwarded
 
 
@@ -273,7 +273,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await httpx_client.aclose()
 
 
-app = FastAPI(title="Grok OAuth Proxy", lifespan=lifespan)
+app = FastAPI(title="Grok MCP Gateway", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +636,7 @@ def main() -> None:
 
     _validate_startup_security(config.HOST, config.PROXY_API_KEY)
     port = find_port(config.PORT)
-    logger.info("Starting Grok OAuth Proxy on http://%s:%d", config.HOST, port)
+    logger.info("Starting Grok MCP Gateway on http://%s:%d", config.HOST, port)
     uvicorn.run(app, host=config.HOST, port=port, log_level="info", access_log=False)
 
 

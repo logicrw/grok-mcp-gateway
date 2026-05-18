@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# uninstall.sh - Grok OAuth Proxy uninstaller
+# uninstall.sh - Grok MCP Gateway uninstaller
 #
 # This script removes the virtual environment and optionally
 # the local token state. It does NOT remove Hermes auth.
@@ -12,7 +12,7 @@ VENV_DIR=".venv"
 STATE_DIR="$HOME/.local/state/grok-oauth-proxy"
 
 echo "=========================================="
-echo "  Grok OAuth Proxy Uninstaller"
+echo "  Grok MCP Gateway Uninstaller"
 echo "=========================================="
 echo ""
 
@@ -27,7 +27,7 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     fi
 fi
 
-read -p "Remove local token state (~/.local/state/grok-oauth-proxy)? [y/N] " -n 1 -r
+read -p "Remove local token state (~/.local/state/grok-oauth-proxy, legacy path)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     if [[ -d "$STATE_DIR" ]]; then

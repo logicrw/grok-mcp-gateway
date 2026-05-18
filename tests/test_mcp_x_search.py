@@ -97,6 +97,32 @@ def test_tools_list_returns_single_x_search_tool():
     assert "excluded_x_handles" in tool["inputSchema"]["properties"]
 
 
+def test_tools_list_respects_allowlist(monkeypatch):
+    monkeypatch.setattr(mcp_x_search.config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
+
+    response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+
+    assert response["result"]["tools"] == []
+
+
+def test_tools_call_respects_allowlist(monkeypatch):
+    monkeypatch.setattr(mcp_x_search.config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "x_search", "arguments": {"query": "latest @xai posts"}},
+            }
+        )
+    )
+
+    assert response["error"]["code"] == -32602
+    assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST" in response["error"]["message"]
+
+
 def test_tools_call_wraps_search_result(monkeypatch):
     before = mcp_x_search._x_search_total_count
 

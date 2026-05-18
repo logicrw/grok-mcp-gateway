@@ -42,8 +42,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_csv(name: str) -> list[str]:
-    raw = os.getenv(name, "")
+def _env_csv(name: str, default: Optional[list[str]] = None) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return list(default or [])
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
@@ -78,4 +80,7 @@ GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING: bool = _env_bool("GROK_PROXY_X_SEARCH_V
 
 # Resident MCP clients can share one proxy process. Keep x_search calls bounded
 # so several local agents cannot stampede the upstream account at once.
+GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
+    item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_search"])
+]
 GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)

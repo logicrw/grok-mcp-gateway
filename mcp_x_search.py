@@ -1,4 +1,4 @@
-"""Minimal MCP stdio server for xAI X search via Hermes OAuth."""
+"""Minimal MCP server for xAI X Search through the Grok MCP Gateway."""
 
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ import httpx
 import config
 import token_manager
 
-SERVER_NAME = "grok-oauth-x-search"
+TOOL_NAME = "x_search"
+SERVER_NAME = "grok-mcp-gateway-x-search"
 SERVER_VERSION = "0.1.0"
 DEFAULT_MODEL = os.getenv("GROK_PROXY_MCP_MODEL", "grok-4.3").strip() or "grok-4.3"
 XAI_RESPONSES_URL = f"{token_manager.XAI_API_BASE}/v1/responses"
@@ -35,10 +36,14 @@ def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
+def _tool_enabled(tool_name: str) -> bool:
+    return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
+
+
 def _tool_definition() -> Dict[str, Any]:
     today = date.today().isoformat()
     return {
-        "name": "x_search",
+        "name": TOOL_NAME,
         "description": (
             "Search X posts through xAI's x_search tool using the local Hermes OAuth session. "
             f"Current local date: {today}. For latest, today, this week, or other time-sensitive "
@@ -117,7 +122,7 @@ def _clean_iso8601_date(arguments: Dict[str, Any], key: str, *, inclusive_end: b
 
 
 def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    tool: Dict[str, Any] = {"type": "x_search"}
+    tool: Dict[str, Any] = {"type": TOOL_NAME}
 
     allowed_handles = _clean_handle_list(arguments, "allowed_x_handles")
     excluded_handles = _clean_handle_list(arguments, "excluded_x_handles")
@@ -251,11 +256,14 @@ async def _handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if method == "ping":
         return _result(request_id, {})
     if method == "tools/list":
-        return _result(request_id, {"tools": [_tool_definition()]})
+        tools = [_tool_definition()] if _tool_enabled(TOOL_NAME) else []
+        return _result(request_id, {"tools": tools})
     if method == "tools/call":
         params = request.get("params") or {}
-        if params.get("name") != "x_search":
+        if params.get("name") != TOOL_NAME:
             return _error(request_id, -32602, "unknown tool")
+        if not _tool_enabled(TOOL_NAME):
+            return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {TOOL_NAME}")
         start = time.monotonic()
         global _x_search_active
         _x_search_active += 1

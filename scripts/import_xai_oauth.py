@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--no-reset-proxy-state",
         action="store_true",
         help=(
-            "Do not remove grok-oauth-proxy's local auth_state.json after import. "
+            "Do not remove Grok MCP Gateway's local auth_state.json after import. "
             "By default the state is removed so the next proxy restart rehydrates "
             "from the newly imported Hermes credentials."
         ),
@@ -127,7 +127,7 @@ def main() -> None:
         print("Proxy token state was left unchanged.")
     else:
         print("Proxy token state will be rehydrated from Hermes on next proxy restart.")
-    print("You can now restart grok-oauth-proxy.")
+    print("You can now restart grok-mcp-gateway.")
 
 
 if __name__ == "__main__":
