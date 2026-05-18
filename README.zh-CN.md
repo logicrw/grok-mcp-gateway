@@ -256,11 +256,11 @@ print(response.choices[0].message.content)
 POST http://127.0.0.1:9996/mcp
 ```
 
-默认暴露两个工具：
+默认暴露三个工具：
 
 - `x_search`：用于开放式 X 搜索和话题发现。
-- `x_latest_posts`：用于按账号抽取最新帖子。查某个账号最近发了什么时，优先用
-  这个工具，避免把帖子原文误改写成主题摘要。
+- `x_posts`：用于按账号、话题、自然语言时间范围和简单互动条件抽取帖子。
+- `x_latest_posts`：单账号最新帖的快捷入口。
 
 ### `x_search`
 
@@ -276,10 +276,31 @@ POST http://127.0.0.1:9996/mcp
 | `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
 | `raw` | boolean | 否 | 返回压缩后的原始 xAI JSON，而不是抽取后的文本。 |
 
+### `x_posts`
+
+这是更严格的帖子抽取工具。它底层仍然使用 xAI `x_search`，但 gateway 会先编译
+常见时间表达，并要求返回结构化 JSON，而不是让模型写成普通摘要。
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `handles` | string array | 否 | 可选作者账号，可带或不带 `@`，最多 10 个。 |
+| `query` | string | 否 | 可选话题或关键词，例如 `Hermes Agent`。 |
+| `time_range` | string | 否 | 自然语言时间范围，例如 `上上周`、`4月1日到4月2日`、`最近30天`、`2026年4月` 或 `不限`。默认最近 30 天。 |
+| `from_date` | string | 否 | ISO8601 搜索起始日期，会覆盖 `time_range` 的起点。 |
+| `to_date` | string | 否 | 包含当天的 ISO8601 搜索结束日期，会覆盖 `time_range` 的终点。 |
+| `count` | integer | 否 | 目标返回帖子数，默认 `10`，最大 `20`。 |
+| `sort` | string | 否 | `latest`、`relevance` 或 `popular`。默认 `latest`，`popular` 为 best-effort。 |
+| `include_replies` | boolean | 否 | xAI 能找到时是否允许包含回复，默认 `true`。 |
+| `include_reposts` | boolean | 否 | xAI 能区分时是否允许包含转帖，默认 `true`。 |
+| `engagement_filter` | object | 否 | best-effort 互动过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。 |
+| `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
+
+`x_posts` 至少需要 `handles` 或 `query` 其中之一。
+
 ### `x_latest_posts`
 
-这个工具底层仍然使用 xAI `x_search`。它不是官方 X API timeline，但给 MCP
-客户端提供了更严格的账号最新帖工具契约。
+这是 `x_posts` 的快捷入口，固定单账号、`sort=latest`，默认回看 30 天。它
+不是官方 X API timeline。
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -320,7 +341,7 @@ curl -sS http://127.0.0.1:9996/mcp \
   }'
 ```
 
-调用账号最新帖抽取：
+调用结构化帖子抽取：
 
 ```bash
 curl -sS http://127.0.0.1:9996/mcp \
@@ -328,6 +349,31 @@ curl -sS http://127.0.0.1:9996/mcp \
   --data '{
     "jsonrpc": "2.0",
     "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "x_posts",
+      "arguments": {
+        "handles": ["0xlogicrw", "xai"],
+        "query": "Hermes Agent",
+        "time_range": "上上周",
+        "count": 10,
+        "sort": "latest",
+        "engagement_filter": {
+          "min_views": 10000000
+        }
+      }
+    }
+  }'
+```
+
+调用账号最新帖抽取：
+
+```bash
+curl -sS http://127.0.0.1:9996/mcp \
+  -H "Content-Type: application/json" \
+  --data '{
+    "jsonrpc": "2.0",
+    "id": 4,
     "method": "tools/call",
     "params": {
       "name": "x_latest_posts",
@@ -476,7 +522,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `UPSTREAM_RETRY_ATTEMPTS` | `2` | 幂等 upstream 请求和瞬时连接错误的重试次数。 |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | upstream 重试基础间隔。 |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | MCP `x_search` 默认使用的 xAI 模型。 |
-| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_latest_posts` | MCP 工具 allowlist，逗号分隔。新增或暴露更多工具前应显式配置。 |
+| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_posts,x_latest_posts` | MCP 工具 allowlist，逗号分隔。新增或暴露更多工具前应显式配置。 |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | MCP `x_search` 最大并发调用数。 |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | 是否向 `/v1/responses` 请求注入 xAI `x_search`。 |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | 未设置 | Auto-injected X Search 的账号 allowlist，逗号分隔。 |
@@ -535,7 +581,7 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_search
 
 常见原因：
 
-- `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` 没有包含 `x_search`。
+- `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` 没有包含你正在调用的工具，例如 `x_search` 或 `x_posts`。
 - xAI OAuth 需要重新在 Hermes 授权。
 - 当前账号没有目标模型或 X Search 权益。
 - `allowed_x_handles` 限制太窄。

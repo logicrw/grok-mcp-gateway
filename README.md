@@ -265,12 +265,12 @@ The resident HTTP MCP endpoint is:
 POST http://127.0.0.1:9996/mcp
 ```
 
-It exposes two tools by default:
+It exposes three tools by default:
 
 - `x_search` for open-ended X search and topic discovery.
-- `x_latest_posts` for account-specific latest-post extraction. Use this when
-  you want recent posts from a handle and want the model to preserve text rather
-  than summarize topics.
+- `x_posts` for structured post extraction by handles, topic, flexible time
+  range, and best-effort engagement filters.
+- `x_latest_posts` as a convenience shortcut for recent posts from one handle.
 
 ### `x_search`
 
@@ -286,11 +286,32 @@ It exposes two tools by default:
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
 | `raw` | boolean | no | Return compact raw xAI response JSON instead of extracted text. |
 
+### `x_posts`
+
+This is the strict extraction surface. It still uses xAI `x_search` under the
+hood, but the gateway compiles common time phrases and asks for structured JSON
+instead of a prose summary.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `handles` | string array | no | Optional author handles, with or without `@`. Supports up to 10 handles. |
+| `query` | string | no | Optional topic or keyword filter, for example `Hermes Agent`. |
+| `time_range` | string | no | Natural-language time window, for example `上上周`, `4月1日到4月2日`, `最近30天`, `2026年4月`, or `不限`. Defaults to the last 30 days. |
+| `from_date` | string | no | ISO8601 search start date. Overrides `time_range` start. |
+| `to_date` | string | no | Inclusive ISO8601 search end date. Overrides `time_range` end. |
+| `count` | integer | no | Target number of posts. Defaults to `10`, max `20`. |
+| `sort` | string | no | `latest`, `relevance`, or `popular`. Defaults to `latest`; `popular` is best-effort. |
+| `include_replies` | boolean | no | Whether replies may be included when xAI can find them. Defaults to `true`. |
+| `include_reposts` | boolean | no | Whether reposts may be included when xAI can distinguish them. Defaults to `true`. |
+| `engagement_filter` | object | no | Best-effort filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. |
+| `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
+
+`x_posts` requires at least one of `handles` or `query`.
+
 ### `x_latest_posts`
 
-This tool still uses xAI `x_search` under the hood. It is not an official X API
-timeline, but it gives MCP clients a stricter tool contract for profile-like
-lookups.
+Shortcut for `x_posts` with one handle, `sort=latest`, and a default 30-day
+lookback. It is not an official X API timeline.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -331,7 +352,7 @@ curl -sS http://127.0.0.1:9996/mcp \
   }'
 ```
 
-Call latest posts extraction:
+Call structured posts extraction:
 
 ```bash
 curl -sS http://127.0.0.1:9996/mcp \
@@ -339,6 +360,31 @@ curl -sS http://127.0.0.1:9996/mcp \
   --data '{
     "jsonrpc": "2.0",
     "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "x_posts",
+      "arguments": {
+        "handles": ["0xlogicrw", "xai"],
+        "query": "Hermes Agent",
+        "time_range": "上上周",
+        "count": 10,
+        "sort": "latest",
+        "engagement_filter": {
+          "min_views": 10000000
+        }
+      }
+    }
+  }'
+```
+
+Call latest posts extraction:
+
+```bash
+curl -sS http://127.0.0.1:9996/mcp \
+  -H "Content-Type: application/json" \
+  --data '{
+    "jsonrpc": "2.0",
+    "id": 4,
     "method": "tools/call",
     "params": {
       "name": "x_latest_posts",
@@ -490,7 +536,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `UPSTREAM_RETRY_ATTEMPTS` | `2` | Retry attempts for idempotent upstream requests and transient connection errors. |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | Base delay between upstream retries. |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | Default xAI model used by MCP `x_search`. |
-| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_latest_posts` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
+| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_posts,x_latest_posts` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Max concurrent MCP `x_search` calls. |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | Inject xAI `x_search` into `/v1/responses` requests. |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | unset | Comma-separated handle allowlist for auto-injected X Search. |
@@ -553,7 +599,7 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_search
 
 Common causes:
 
-- `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` does not include `x_search`.
+- `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` does not include the tool you are calling, for example `x_search` or `x_posts`.
 - xAI OAuth needs Hermes re-authentication.
 - The account does not have access to the requested model or X Search feature.
 - `allowed_x_handles` is too restrictive.

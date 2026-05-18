@@ -70,14 +70,15 @@ def test_build_x_search_tool_rejects_invalid_dates():
 
 
 def test_build_latest_posts_search_arguments_constrains_handle_and_dates():
-    arguments = mcp_x_search._build_latest_posts_search_arguments(
+    arguments, metadata = mcp_x_search._build_latest_posts_search_arguments(
         {"handle": "@0xlogicrw", "count": 5, "from_date": "2026-05-01", "to_date": "2026-05-18"}
     )
 
     assert arguments["allowed_x_handles"] == ["0xlogicrw"]
     assert arguments["from_date"] == "2026-05-01"
     assert arguments["to_date"] == "2026-05-18"
-    assert "latest 5 posts authored by @0xlogicrw" in arguments["query"]
+    assert metadata["handles"] == ["0xlogicrw"]
+    assert "Return up to 5 posts" in arguments["query"]
     assert "Preserve each post's text exactly as available" in arguments["query"]
     assert "Return only compact JSON" in arguments["query"]
 
@@ -100,6 +101,64 @@ def test_build_latest_posts_search_arguments_rejects_bad_count():
         raise AssertionError("expected ValueError")
 
 
+def test_compile_time_range_parses_week_before_last():
+    compiled = mcp_x_search._compile_time_range({"time_range": "上上周"}, today=mcp_x_search.date(2026, 5, 18))
+
+    assert compiled["from_date"] == "2026-05-04"
+    assert compiled["to_date"] == "2026-05-10"
+    assert compiled["compiled"] is True
+
+
+def test_compile_time_range_parses_month_day_range_with_local_year():
+    compiled = mcp_x_search._compile_time_range(
+        {"time_range": "4月1日到4月2日"}, today=mcp_x_search.date(2026, 5, 18)
+    )
+
+    assert compiled["from_date"] == "2026-04-01"
+    assert compiled["to_date"] == "2026-04-02"
+    assert "2026" in compiled["assumption"]
+
+
+def test_compile_time_range_marks_unparsed_text():
+    compiled = mcp_x_search._compile_time_range({"time_range": "AI寒武纪之后那段时间"})
+
+    assert compiled["compiled"] is False
+    assert compiled["from_date"] is None
+    assert compiled["to_date"] is None
+
+
+def test_build_posts_search_arguments_supports_flexible_filters():
+    arguments, metadata = mcp_x_search._build_posts_search_arguments(
+        {
+            "handles": ["@0xlogicrw", "xai"],
+            "query": "Hermes Agent",
+            "time_range": "上个月",
+            "count": 7,
+            "sort": "popular",
+            "include_replies": False,
+            "include_reposts": False,
+            "engagement_filter": {"min_views": 10000000},
+        }
+    )
+
+    assert arguments["allowed_x_handles"] == ["0xlogicrw", "xai"]
+    assert metadata["count"] == 7
+    assert metadata["sort"] == "popular"
+    assert metadata["engagement_filter"] == {"min_views": 10000000}
+    assert "Hermes Agent" in arguments["query"]
+    assert "views >= 10000000" in arguments["query"]
+    assert "Exclude replies" in arguments["query"]
+
+
+def test_build_posts_search_arguments_requires_handle_or_query():
+    try:
+        mcp_x_search._build_posts_search_arguments({"time_range": "上个月"})
+    except ValueError as exc:
+        assert "at least one handle or a query" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_extract_output_text_supports_responses_content_shape():
     response = {
         "output": [
@@ -116,16 +175,18 @@ def test_extract_output_text_supports_responses_content_shape():
     assert mcp_x_search._extract_output_text(response) == "first\nsecond"
 
 
-def test_tools_list_returns_x_search_and_latest_posts_tools():
+def test_tools_list_returns_search_posts_and_latest_posts_tools():
     response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
 
     tools = {tool["name"]: tool for tool in response["result"]["tools"]}
 
-    assert set(tools) == {"x_search", "x_latest_posts"}
+    assert set(tools) == {"x_search", "x_posts", "x_latest_posts"}
     assert tools["x_search"]["inputSchema"]["required"] == ["query"]
     assert "from_date" in tools["x_search"]["inputSchema"]["properties"]
     assert "to_date" in tools["x_search"]["inputSchema"]["properties"]
     assert "excluded_x_handles" in tools["x_search"]["inputSchema"]["properties"]
+    assert "time_range" in tools["x_posts"]["inputSchema"]["properties"]
+    assert "engagement_filter" in tools["x_posts"]["inputSchema"]["properties"]
     assert tools["x_latest_posts"]["inputSchema"]["required"] == ["handle"]
     assert "count" in tools["x_latest_posts"]["inputSchema"]["properties"]
 
@@ -212,7 +273,40 @@ def test_tools_call_wraps_latest_posts_result(monkeypatch):
     text = response["result"]["content"][0]["text"]
     assert text.startswith("Tool: x_latest_posts")
     assert seen["allowed_x_handles"] == ["0xlogicrw"]
-    assert "latest 3 posts authored by @0xlogicrw" in seen["query"]
+    assert "Return up to 3 posts" in seen["query"]
+    assert response["result"]["structuredContent"]["posts"] == []
+    assert mcp_x_search._x_search_total_count == before + 1
+
+
+def test_tools_call_wraps_posts_result(monkeypatch):
+    before = mcp_x_search._x_search_total_count
+    seen = {}
+
+    async def fake_call(arguments):
+        seen.update(arguments)
+        return '{"posts":[{"text":"hello"}]}'
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_posts",
+                    "arguments": {"handles": ["0xlogicrw"], "query": "Hermes", "time_range": "上上周"},
+                },
+            }
+        )
+    )
+
+    text = response["result"]["content"][0]["text"]
+    assert text.startswith("Tool: x_posts")
+    assert seen["allowed_x_handles"] == ["0xlogicrw"]
+    assert "Hermes" in seen["query"]
+    assert response["result"]["structuredContent"]["posts"][0]["text"] == "hello"
     assert mcp_x_search._x_search_total_count == before + 1
 
 
