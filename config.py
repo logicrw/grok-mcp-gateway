@@ -81,6 +81,6 @@ GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING: bool = _env_bool("GROK_PROXY_X_SEARCH_V
 # Resident MCP clients can share one proxy process. Keep x_search calls bounded
 # so several local agents cannot stampede the upstream account at once.
 GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
-    item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_search"])
+    item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_search", "x_latest_posts"])
 ]
 GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)

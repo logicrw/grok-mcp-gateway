@@ -9,6 +9,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - Document the project scope explicitly so users do not confuse it with a
   general MCP router, Node.js template, Docker deployment, or official X API MCP
   replacement.
+- Add `x_latest_posts`, a stricter MCP tool for account-specific latest-post
+  extraction on top of the existing xAI `x_search` backend.
 
 ## 2026-05-18
 

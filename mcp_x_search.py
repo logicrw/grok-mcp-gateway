@@ -16,7 +16,9 @@ import httpx
 import config
 import token_manager
 
-TOOL_NAME = "x_search"
+X_SEARCH_TOOL_NAME = "x_search"
+LATEST_POSTS_TOOL_NAME = "x_latest_posts"
+TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_NAME = "grok-mcp-gateway-x-search"
 SERVER_VERSION = "0.1.0"
 DEFAULT_MODEL = os.getenv("GROK_PROXY_MCP_MODEL", "grok-4.3").strip() or "grok-4.3"
@@ -40,10 +42,10 @@ def _tool_enabled(tool_name: str) -> bool:
     return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
 
 
-def _tool_definition() -> Dict[str, Any]:
+def _x_search_tool_definition() -> Dict[str, Any]:
     today = date.today().isoformat()
     return {
-        "name": TOOL_NAME,
+        "name": X_SEARCH_TOOL_NAME,
         "description": (
             "Search X posts through xAI's x_search tool using the local Hermes OAuth session. "
             f"Current local date: {today}. For latest, today, this week, or other time-sensitive "
@@ -88,6 +90,60 @@ def _tool_definition() -> Dict[str, Any]:
     }
 
 
+def _latest_posts_tool_definition() -> Dict[str, Any]:
+    today = date.today().isoformat()
+    return {
+        "name": LATEST_POSTS_TOOL_NAME,
+        "description": (
+            "Fetch recent posts from one X handle through xAI's x_search tool. Use this instead of "
+            "generic x_search when the user asks for latest posts, timeline-like results, or exact "
+            f"posts from an account. Current local date: {today}. Returns extraction-oriented text, "
+            "not a verified X API timeline."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string",
+                    "description": "Single X handle to search, with or without @, for example '0xlogicrw'.",
+                },
+                "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Target number of recent posts to return. Defaults to 10.",
+                },
+                "lookback_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "Default recency window when from_date is omitted. Defaults to 30.",
+                },
+                "from_date": {
+                    "type": "string",
+                    "description": "Optional ISO8601 search start date. Overrides lookback_days.",
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Optional inclusive ISO8601 search end date. Defaults to today.",
+                },
+                "include_replies": {
+                    "type": "boolean",
+                    "description": "Whether replies may be included when x_search can find them. Defaults to true.",
+                },
+                "model": {"type": "string", "description": f"Optional xAI model. Defaults to {DEFAULT_MODEL}."},
+            },
+            "required": ["handle"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def _tool_definitions() -> list[Dict[str, Any]]:
+    definitions = [_x_search_tool_definition(), _latest_posts_tool_definition()]
+    return [definition for definition in definitions if _tool_enabled(str(definition["name"]))]
+
+
 def _clean_handle_list(arguments: Dict[str, Any], key: str) -> Optional[list[str]]:
     handles = arguments.get(key)
     if handles is None:
@@ -98,6 +154,29 @@ def _clean_handle_list(arguments: Dict[str, Any], key: str) -> Optional[list[str
     if len(cleaned) > 10:
         raise ValueError(f"{key} supports at most 10 handles")
     return cleaned or None
+
+
+def _clean_single_handle(arguments: Dict[str, Any], key: str) -> str:
+    value = arguments.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    handle = value.strip().lstrip("@")
+    if not handle:
+        raise ValueError(f"{key} is required")
+    if "," in handle or "/" in handle or " " in handle:
+        raise ValueError(f"{key} must be a single X handle, for example '0xlogicrw'")
+    return handle
+
+
+def _clean_int(arguments: Dict[str, Any], key: str, default: int, *, minimum: int, maximum: int) -> int:
+    value = arguments.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{key} must be an integer")
+    if value < minimum or value > maximum:
+        raise ValueError(f"{key} must be between {minimum} and {maximum}")
+    return value
 
 
 def _clean_iso8601_date(arguments: Dict[str, Any], key: str, *, inclusive_end: bool = False) -> Optional[str]:
@@ -146,6 +225,62 @@ def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         tool["enable_video_understanding"] = True
 
     return tool
+
+
+def _build_latest_posts_search_arguments(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    handle = _clean_single_handle(arguments, "handle")
+    count = _clean_int(arguments, "count", 10, minimum=1, maximum=20)
+    lookback_days = _clean_int(arguments, "lookback_days", 30, minimum=1, maximum=365)
+    from_date = _clean_iso8601_date(arguments, "from_date")
+    to_date = _clean_iso8601_date(arguments, "to_date")
+    if from_date is None:
+        from_date = (date.today() - timedelta(days=lookback_days)).isoformat()
+    if to_date is None:
+        to_date = date.today().isoformat()
+
+    include_replies = arguments.get("include_replies")
+    if include_replies is None:
+        include_replies = True
+    if not isinstance(include_replies, bool):
+        raise ValueError("include_replies must be a boolean")
+
+    reply_rule = "Include replies if they are authored by the handle." if include_replies else "Exclude replies."
+    query = f"""
+Search X for the latest {count} posts authored by @{handle}.
+
+Hard constraints:
+- Search only posts authored by @{handle}; do not include posts merely mentioning this handle.
+- Search window: {from_date} through {to_date}, inclusive.
+- {reply_rule}
+- Sort results in reverse chronological order.
+- Preserve each post's text exactly as available. Do not translate, summarize, retitle, or infer topics.
+- Do not invent model releases, metrics, company actions, links, or dates not present in the post text.
+- If exact text, timestamp, or URL is unavailable, mark that field as null or truncated instead of guessing.
+
+Return only compact JSON with this shape:
+{{
+  "handle": "{handle}",
+  "count_requested": {count},
+  "source_limit": "xAI x_search generated extraction, not official X API timeline",
+  "posts": [
+    {{
+      "created_at": "ISO8601 timestamp or null",
+      "text": "exact post text as available",
+      "url": "post URL or null",
+      "truncated": true,
+      "notes": "only factual uncertainty notes, or null"
+    }}
+  ]
+}}
+""".strip()
+
+    return {
+        "query": query,
+        "allowed_x_handles": [handle],
+        "from_date": from_date,
+        "to_date": to_date,
+        "model": arguments.get("model"),
+    }
 
 
 def _extract_output_text(response: Dict[str, Any]) -> str:
@@ -238,6 +373,16 @@ async def _call_x_search(arguments: Dict[str, Any]) -> str:
     return text or json.dumps(_compact_response(data), ensure_ascii=False, separators=(",", ":"))
 
 
+async def _call_latest_posts(arguments: Dict[str, Any]) -> str:
+    search_arguments = _build_latest_posts_search_arguments(arguments)
+    text = await _call_x_search(search_arguments)
+    return (
+        "Tool: x_latest_posts\n"
+        "Do not summarize or rewrite this tool result. Treat missing or truncated fields as missing data.\n\n"
+        f"{text}"
+    )
+
+
 async def _handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     request_id = request.get("id")
     method = request.get("method")
@@ -256,19 +401,23 @@ async def _handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if method == "ping":
         return _result(request_id, {})
     if method == "tools/list":
-        tools = [_tool_definition()] if _tool_enabled(TOOL_NAME) else []
-        return _result(request_id, {"tools": tools})
+        return _result(request_id, {"tools": _tool_definitions()})
     if method == "tools/call":
         params = request.get("params") or {}
-        if params.get("name") != TOOL_NAME:
+        tool_name = params.get("name")
+        if tool_name not in {X_SEARCH_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
             return _error(request_id, -32602, "unknown tool")
-        if not _tool_enabled(TOOL_NAME):
-            return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {TOOL_NAME}")
+        if not _tool_enabled(str(tool_name)):
+            return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {tool_name}")
         start = time.monotonic()
         global _x_search_active
         _x_search_active += 1
         try:
-            text = await _call_x_search(params.get("arguments") or {})
+            arguments = params.get("arguments") or {}
+            if tool_name == LATEST_POSTS_TOOL_NAME:
+                text = await _call_latest_posts(arguments)
+            else:
+                text = await _call_x_search(arguments)
             _record_x_search("success", time.monotonic() - start)
             return _result(request_id, {"content": [{"type": "text", "text": text}], "isError": False})
         except Exception as exc:

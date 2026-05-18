@@ -66,8 +66,8 @@ through xAI using your local OAuth session.
 [X's official MCP documentation](https://docs.x.com/tools/mcp) describes two
 different surfaces: the X API MCP server for X API actions and the X Docs MCP
 server for querying documentation. Grok MCP Gateway is narrower: it keeps the
-Hermes/xAI OAuth model gateway and exposes one focused MCP tool, `x_search`,
-through the xAI Responses API.
+Hermes/xAI OAuth model gateway and exposes focused MCP tools backed by xAI
+Responses API search.
 
 Run the official X MCP server alongside this gateway if you need broader X API
 actions such as account or posting workflows. Keep this gateway for local Grok
@@ -80,7 +80,7 @@ This project is:
 
 - a local OpenAI-compatible gateway for Grok model calls through Hermes-derived
   xAI OAuth;
-- a resident HTTP MCP server that exposes one focused `x_search` tool;
+- a resident HTTP MCP server that exposes focused X Search tools;
 - a shared local process for Alma, Codex, Claude Code, Gemini CLI, Antigravity,
   LiteLLM, and similar agent clients.
 
@@ -101,7 +101,7 @@ Proxy OpenAI-compatible requests to xAI with Hermes-derived OAuth.
 
 **Resident HTTP MCP X Search**
 
-Expose one shared `/mcp` endpoint with an `x_search` tool for Alma and other
+Expose one shared `/mcp` endpoint with X Search tools for Alma and other
 MCP-capable local clients.
 
 **Non-Grok model tool access**
@@ -265,7 +265,14 @@ The resident HTTP MCP endpoint is:
 POST http://127.0.0.1:9996/mcp
 ```
 
-It exposes one tool: `x_search`.
+It exposes two tools by default:
+
+- `x_search` for open-ended X search and topic discovery.
+- `x_latest_posts` for account-specific latest-post extraction. Use this when
+  you want recent posts from a handle and want the model to preserve text rather
+  than summarize topics.
+
+### `x_search`
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -278,6 +285,22 @@ It exposes one tool: `x_search`.
 | `enable_video_understanding` | boolean | no | Ask xAI to use video understanding when supported. |
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
 | `raw` | boolean | no | Return compact raw xAI response JSON instead of extracted text. |
+
+### `x_latest_posts`
+
+This tool still uses xAI `x_search` under the hood. It is not an official X API
+timeline, but it gives MCP clients a stricter tool contract for profile-like
+lookups.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `handle` | string | yes | Single X handle, with or without `@`, for example `0xlogicrw`. |
+| `count` | integer | no | Target number of recent posts. Defaults to `10`, max `20`. |
+| `lookback_days` | integer | no | Default recency window when `from_date` is omitted. Defaults to `30`. |
+| `from_date` | string | no | ISO8601 search start date. Overrides `lookback_days`. |
+| `to_date` | string | no | Inclusive ISO8601 search end date. Defaults to today. |
+| `include_replies` | boolean | no | Whether replies may be included when xAI can find them. Defaults to `true`. |
+| `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
 
 List tools:
 
@@ -303,6 +326,26 @@ curl -sS http://127.0.0.1:9996/mcp \
         "allowed_x_handles": ["xai"],
         "from_date": "2026-05-18",
         "to_date": "2026-05-18"
+      }
+    }
+  }'
+```
+
+Call latest posts extraction:
+
+```bash
+curl -sS http://127.0.0.1:9996/mcp \
+  -H "Content-Type: application/json" \
+  --data '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "x_latest_posts",
+      "arguments": {
+        "handle": "0xlogicrw",
+        "count": 10,
+        "lookback_days": 30
       }
     }
   }'
@@ -447,7 +490,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `UPSTREAM_RETRY_ATTEMPTS` | `2` | Retry attempts for idempotent upstream requests and transient connection errors. |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | Base delay between upstream retries. |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | Default xAI model used by MCP `x_search`. |
-| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
+| `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_latest_posts` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Max concurrent MCP `x_search` calls. |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | Inject xAI `x_search` into `/v1/responses` requests. |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | unset | Comma-separated handle allowlist for auto-injected X Search. |
