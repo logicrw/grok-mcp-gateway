@@ -11,6 +11,8 @@ def test_build_x_search_tool_keeps_only_requested_options():
     tool = mcp_x_search._build_x_search_tool(
         {
             "allowed_x_handles": ["@xai", " elonmusk "],
+            "from_date": "2026-05-18",
+            "to_date": "2026-05-18",
             "enable_image_understanding": True,
             "enable_video_understanding": False,
         }
@@ -19,8 +21,52 @@ def test_build_x_search_tool_keeps_only_requested_options():
     assert tool == {
         "type": "x_search",
         "allowed_x_handles": ["xai", "elonmusk"],
+        "from_date": "2026-05-18",
+        "to_date": "2026-05-19",
         "enable_image_understanding": True,
     }
+
+
+def test_build_x_search_tool_treats_date_only_to_date_as_inclusive():
+    tool = mcp_x_search._build_x_search_tool({"from_date": "2026-05-18", "to_date": "2026-05-18"})
+
+    assert tool["from_date"] == "2026-05-18"
+    assert tool["to_date"] == "2026-05-19"
+
+
+def test_build_x_search_tool_keeps_datetime_to_date_exact():
+    tool = mcp_x_search._build_x_search_tool(
+        {"from_date": "2026-05-18T00:00:00Z", "to_date": "2026-05-18T23:59:59Z"}
+    )
+
+    assert tool["from_date"] == "2026-05-18T00:00:00Z"
+    assert tool["to_date"] == "2026-05-18T23:59:59Z"
+
+
+def test_build_x_search_tool_supports_excluded_handles():
+    tool = mcp_x_search._build_x_search_tool({"excluded_x_handles": ["@grok"]})
+
+    assert tool == {"type": "x_search", "excluded_x_handles": ["grok"]}
+
+
+def test_build_x_search_tool_rejects_conflicting_handle_filters():
+    try:
+        mcp_x_search._build_x_search_tool(
+            {"allowed_x_handles": ["xai"], "excluded_x_handles": ["grok"]}
+        )
+    except ValueError as exc:
+        assert "cannot be used together" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_build_x_search_tool_rejects_invalid_dates():
+    try:
+        mcp_x_search._build_x_search_tool({"from_date": "today"})
+    except ValueError as exc:
+        assert "ISO8601" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_extract_output_text_supports_responses_content_shape():
@@ -42,8 +88,13 @@ def test_extract_output_text_supports_responses_content_shape():
 def test_tools_list_returns_single_x_search_tool():
     response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
 
-    assert response["result"]["tools"][0]["name"] == "x_search"
-    assert response["result"]["tools"][0]["inputSchema"]["required"] == ["query"]
+    tool = response["result"]["tools"][0]
+
+    assert tool["name"] == "x_search"
+    assert tool["inputSchema"]["required"] == ["query"]
+    assert "from_date" in tool["inputSchema"]["properties"]
+    assert "to_date" in tool["inputSchema"]["properties"]
+    assert "excluded_x_handles" in tool["inputSchema"]["properties"]
 
 
 def test_tools_call_wraps_search_result(monkeypatch):

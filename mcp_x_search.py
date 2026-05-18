@@ -8,6 +8,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
 import httpx
@@ -35,9 +36,14 @@ def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
 
 
 def _tool_definition() -> Dict[str, Any]:
+    today = date.today().isoformat()
     return {
         "name": "x_search",
-        "description": "Search X posts through xAI's x_search tool using the local Hermes OAuth session.",
+        "description": (
+            "Search X posts through xAI's x_search tool using the local Hermes OAuth session. "
+            f"Current local date: {today}. For latest, today, this week, or other time-sensitive "
+            "requests, pass from_date/to_date explicitly instead of relying only on natural language."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -50,6 +56,22 @@ def _tool_definition() -> Dict[str, Any]:
                     "items": {"type": "string"},
                     "description": "Optional handle allowlist, for example ['elonmusk', 'xai'].",
                 },
+                "excluded_x_handles": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional handle blocklist. Cannot be used with allowed_x_handles.",
+                },
+                "from_date": {
+                    "type": "string",
+                    "description": "Optional ISO8601 search start date, for example '2026-05-18'.",
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": (
+                        "Optional inclusive ISO8601 search end date, for example '2026-05-18'. "
+                        "Date-only values are normalized by the proxy for xAI's current date-bound behavior."
+                    ),
+                },
                 "enable_image_understanding": {"type": "boolean"},
                 "enable_video_understanding": {"type": "boolean"},
                 "model": {"type": "string", "description": f"Optional xAI model. Defaults to {DEFAULT_MODEL}."},
@@ -61,14 +83,57 @@ def _tool_definition() -> Dict[str, Any]:
     }
 
 
+def _clean_handle_list(arguments: Dict[str, Any], key: str) -> Optional[list[str]]:
+    handles = arguments.get(key)
+    if handles is None:
+        return None
+    if not isinstance(handles, list) or not all(isinstance(handle, str) for handle in handles):
+        raise ValueError(f"{key} must be an array of strings")
+    cleaned = [handle.strip().lstrip("@") for handle in handles if handle.strip()]
+    if len(cleaned) > 10:
+        raise ValueError(f"{key} supports at most 10 handles")
+    return cleaned or None
+
+
+def _clean_iso8601_date(arguments: Dict[str, Any], key: str, *, inclusive_end: bool = False) -> Optional[str]:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be an ISO8601 date string")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        if "T" in cleaned:
+            datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+        else:
+            parsed_date = date.fromisoformat(cleaned)
+            if inclusive_end:
+                return (parsed_date + timedelta(days=1)).isoformat()
+    except ValueError as exc:
+        raise ValueError(f"{key} must be an ISO8601 date string, for example '2026-05-18'") from exc
+    return cleaned
+
+
 def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     tool: Dict[str, Any] = {"type": "x_search"}
 
-    handles = arguments.get("allowed_x_handles")
-    if handles:
-        if not isinstance(handles, list) or not all(isinstance(handle, str) for handle in handles):
-            raise ValueError("allowed_x_handles must be an array of strings")
-        tool["allowed_x_handles"] = [handle.strip().lstrip("@") for handle in handles if handle.strip()]
+    allowed_handles = _clean_handle_list(arguments, "allowed_x_handles")
+    excluded_handles = _clean_handle_list(arguments, "excluded_x_handles")
+    if allowed_handles and excluded_handles:
+        raise ValueError("allowed_x_handles and excluded_x_handles cannot be used together")
+    if allowed_handles:
+        tool["allowed_x_handles"] = allowed_handles
+    if excluded_handles:
+        tool["excluded_x_handles"] = excluded_handles
+
+    from_date = _clean_iso8601_date(arguments, "from_date")
+    to_date = _clean_iso8601_date(arguments, "to_date", inclusive_end=True)
+    if from_date:
+        tool["from_date"] = from_date
+    if to_date:
+        tool["to_date"] = to_date
 
     if arguments.get("enable_image_understanding") is True:
         tool["enable_image_understanding"] = True

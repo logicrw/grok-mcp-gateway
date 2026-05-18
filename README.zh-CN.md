@@ -246,6 +246,9 @@ POST http://127.0.0.1:9996/mcp
 | --- | --- | --- | --- |
 | `query` | string | 是 | 自然语言搜索请求。建议写清主题、账号、时间范围和输出格式。 |
 | `allowed_x_handles` | string array | 否 | 限定搜索账号，例如 `["elonmusk", "xai"]`。 |
+| `excluded_x_handles` | string array | 否 | 排除指定账号。不能和 `allowed_x_handles` 同时使用。 |
+| `from_date` | string | 否 | ISO8601 搜索起始日期，例如 `2026-05-18`。 |
+| `to_date` | string | 否 | 包含当天的 ISO8601 搜索结束日期，例如 `2026-05-18`。date-only 值会由 proxy 适配 xAI 当前日期边界行为。 |
 | `enable_image_understanding` | boolean | 否 | 支持时让 xAI 使用图片理解。 |
 | `enable_video_understanding` | boolean | 否 | 支持时让 xAI 使用视频理解。 |
 | `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
@@ -272,7 +275,9 @@ curl -sS http://127.0.0.1:9996/mcp \
       "name": "x_search",
       "arguments": {
         "query": "Search recent X posts from @xai about Hermes Agent. Reply in one short sentence.",
-        "allowed_x_handles": ["xai"]
+        "allowed_x_handles": ["xai"],
+        "from_date": "2026-05-18",
+        "to_date": "2026-05-18"
       }
     }
   }'

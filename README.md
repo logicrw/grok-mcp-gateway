@@ -253,6 +253,9 @@ It exposes one tool: `x_search`.
 | --- | --- | --- | --- |
 | `query` | string | yes | Natural-language search request. Include topic, handles, time window, and desired output. |
 | `allowed_x_handles` | string array | no | Restrict search to handles such as `["elonmusk", "xai"]`. |
+| `excluded_x_handles` | string array | no | Exclude handles. Cannot be used with `allowed_x_handles`. |
+| `from_date` | string | no | ISO8601 search start date, for example `2026-05-18`. |
+| `to_date` | string | no | Inclusive ISO8601 search end date, for example `2026-05-18`. Date-only values are normalized for xAI's current date-bound behavior. |
 | `enable_image_understanding` | boolean | no | Ask xAI to use image understanding when supported. |
 | `enable_video_understanding` | boolean | no | Ask xAI to use video understanding when supported. |
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
@@ -279,7 +282,9 @@ curl -sS http://127.0.0.1:9996/mcp \
       "name": "x_search",
       "arguments": {
         "query": "Search recent X posts from @xai about Hermes Agent. Reply in one short sentence.",
-        "allowed_x_handles": ["xai"]
+        "allowed_x_handles": ["xai"],
+        "from_date": "2026-05-18",
+        "to_date": "2026-05-18"
       }
     }
   }'
