@@ -245,5 +245,5 @@ else
 fi
 
 echo ""
-echo "See README.md or README.ko.md for more details."
+echo "See README.md or README.zh-CN.md for more details."
 echo ""
