@@ -1,0 +1,395 @@
+"""Manages xAI OAuth tokens copied from Hermes auth.json.
+
+Runs independently from Hermes to avoid token-refresh races.
+All blocking I/O is wrapped with asyncio.to_thread so this module
+is safe to call from async FastAPI handlers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import shutil
+import stat
+import tempfile
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+from typing import Any, Dict, Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+import config
+
+HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
+_STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
+LOCAL_AUTH_PATH = Path(
+    os.getenv("GROK_PROXY_AUTH_STATE", str(_STATE_HOME / "grok-oauth-proxy" / "auth_state.json"))
+).expanduser()
+LEGACY_LOCAL_AUTH_PATH = Path(__file__).with_name("auth_state.json")
+
+XAI_TOKEN_ENDPOINT = "https://auth.x.ai/oauth2/token"
+XAI_API_BASE = "https://api.x.ai"
+
+REFRESH_SKEW_SECONDS = 120
+
+# Prevent concurrent token refreshes from racing each other.
+_refresh_lock = asyncio.Lock()
+
+
+def _decode_jwt_payload(token: str) -> Dict[str, Any]:
+    """Return an unverified JWT payload, or an empty dict for non-JWT values."""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        payload_b64 = parts[1]
+        pad_len = (4 - (len(payload_b64) % 4)) % 4
+        payload_b64 += "=" * pad_len
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode("ascii")).decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _decode_jwt_exp(token: str) -> Optional[float]:
+    """Return the 'exp' claim from an unverified JWT, or None."""
+    payload = _decode_jwt_payload(token)
+    exp = payload.get("exp")
+    if isinstance(exp, (int, float)):
+        return float(exp)
+    return None
+
+
+def _extract_oauth_client_id(tokens: Dict[str, Any], explicit_client_id: str = "") -> str:
+    """Extract the OAuth public client_id from Hermes token claims.
+
+    Hermes stores the xAI public client identifier in JWT claims (`client_id`
+    and/or `aud`) rather than as a standalone auth.json field. Importing it from
+    the user's authenticated Hermes state avoids shipping a distribution-specific
+    client_id constant in this proxy.
+    """
+    candidates: list[Any] = [explicit_client_id]
+    for token_name in ("access_token", "id_token"):
+        claims = _decode_jwt_payload(str(tokens.get(token_name) or ""))
+        candidates.append(claims.get("client_id"))
+        candidates.append(claims.get("aud"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+def _is_expiring(access_token: str, skew_seconds: int = REFRESH_SKEW_SECONDS) -> bool:
+    exp = _decode_jwt_exp(access_token)
+    if exp is None:
+        return False
+    return exp <= (time.time() + max(0, skew_seconds))
+
+
+def _load_json_sync(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
+    _restrict_existing_file(path)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read token state file: %s", exc.__class__.__name__)
+        return None
+
+
+def _ensure_private_state_dir(path: Path) -> None:
+    """Create and lock down the directory that stores live OAuth state."""
+    if path.parent.exists():
+        parent_stat = path.parent.lstat()
+        if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+            raise RuntimeError("Refusing to use unsafe token state directory.")
+        parent_mode = stat.S_IMODE(parent_stat.st_mode)
+        current_uid = os.getuid() if hasattr(os, "getuid") else parent_stat.st_uid
+        if path.parent.name == "grok-oauth-proxy" and parent_stat.st_uid == current_uid:
+            os.chmod(path.parent, 0o700)
+        elif parent_mode & 0o022:
+            raise RuntimeError("Token state directory is group/world-writable; refusing to store OAuth tokens there.")
+        return
+    path.parent.mkdir(parents=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+
+
+def _restrict_existing_file(path: Path) -> None:
+    """Best-effort chmod for existing token state files before reading."""
+    try:
+        stat_result = path.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(stat_result.st_mode):
+        raise RuntimeError("Refusing to read symlinked token state file.")
+    if not stat.S_ISREG(stat_result.st_mode):
+        raise RuntimeError("Refusing to read non-regular token state file.")
+    mode = stat.S_IMODE(stat_result.st_mode)
+    if mode & 0o077:
+        try:
+            os.chmod(path, 0o600)
+        except PermissionError as exc:
+            raise RuntimeError("Token state file permissions are too open and could not be repaired.") from exc
+
+
+def _save_json_sync(path: Path, data: Dict[str, Any]) -> None:
+    _ensure_private_state_dir(path)
+    tmp: Optional[Path] = None
+    fd: Optional[int] = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        tmp = Path(tmp_name)
+        os.chmod(tmp, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = None
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    except Exception:
+        if fd is not None:
+            os.close(fd)
+        if tmp is not None and tmp.exists():
+            tmp.unlink()
+        raise
+
+
+async def _load_json(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        return await asyncio.to_thread(_load_json_sync, path)
+    except RuntimeError:
+        return _load_json_sync(path)
+
+
+async def _save_json(path: Path, data: Dict[str, Any]) -> None:
+    try:
+        return await asyncio.to_thread(_save_json_sync, path, data)
+    except RuntimeError:
+        return _save_json_sync(path, data)
+
+
+def _validate_token_endpoint(token_endpoint: str) -> str:
+    endpoint = (token_endpoint or XAI_TOKEN_ENDPOINT).strip()
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "auth.x.ai"
+        or parsed.path != "/oauth2/token"
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("Refusing untrusted xAI token_endpoint in OAuth state.")
+    return endpoint
+
+
+async def load_from_hermes(auth_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Read xai-oauth tokens from Hermes auth.json and return a local state dict."""
+    path = auth_path or HERMES_AUTH_PATH
+    data = await _load_json(path)
+    if not data:
+        return None
+    providers = data.get("providers") or {}
+    xai_state = providers.get("xai-oauth")
+    if xai_state:
+        tokens = xai_state.get("tokens") or {}
+        discovery = xai_state.get("discovery") or {}
+        client_id = _extract_oauth_client_id(tokens, str(xai_state.get("client_id") or ""))
+        return {
+            "access_token": str(tokens.get("access_token") or "").strip(),
+            "refresh_token": str(tokens.get("refresh_token") or "").strip(),
+            "client_id": client_id,
+            "token_type": str(tokens.get("token_type") or "Bearer").strip() or "Bearer",
+            "expires_in": tokens.get("expires_in"),
+            "token_endpoint": _validate_token_endpoint(str(discovery.get("token_endpoint") or XAI_TOKEN_ENDPOINT)),
+            "last_refresh": xai_state.get("last_refresh"),
+        }
+
+    pool_entries = (data.get("credential_pool") or {}).get("xai-oauth") or []
+    if not pool_entries:
+        return None
+    pool_entry = next(
+        (
+            entry
+            for entry in pool_entries
+            if str(entry.get("last_status") or "").lower() in {"", "ok"}
+        ),
+        pool_entries[0],
+    )
+    client_id = _extract_oauth_client_id(pool_entry, str(pool_entry.get("client_id") or ""))
+    return {
+        "access_token": str(pool_entry.get("access_token") or "").strip(),
+        "refresh_token": str(pool_entry.get("refresh_token") or "").strip(),
+        "client_id": client_id,
+        "token_type": "Bearer",
+        "expires_in": pool_entry.get("expires_in"),
+        "token_endpoint": XAI_TOKEN_ENDPOINT,
+        "last_refresh": pool_entry.get("last_refresh"),
+    }
+
+
+async def init_local_state() -> Dict[str, Any]:
+    """Bootstrap local auth_state.json from Hermes (if present)."""
+    if not shutil.which("hermes"):
+        raise RuntimeError(
+            "Hermes Agent CLI not found. Install Hermes and complete xAI Grok OAuth before starting this proxy."
+        )
+    if not HERMES_AUTH_PATH.exists():
+        raise RuntimeError(
+            "Hermes auth.json not found. Install and configure Hermes before starting this proxy."
+        )
+    state = await load_from_hermes()
+    if not state or not state.get("access_token"):
+        raise RuntimeError(
+            "No xai-oauth credentials found in Hermes auth.json. "
+            "Run 'hermes model' and select xAI Grok OAuth first."
+        )
+    if not state.get("client_id"):
+        raise RuntimeError("Hermes xai-oauth credentials do not include an OAuth client_id claim.")
+    await _save_json(LOCAL_AUTH_PATH, state)
+    logger.info("Initialized local token state from Hermes.")
+    return state
+
+
+async def read_local_state() -> Dict[str, Any]:
+    """Read local auth_state.json, bootstrapping from Hermes if missing."""
+    data = await _load_json(LOCAL_AUTH_PATH)
+    if not data and LEGACY_LOCAL_AUTH_PATH.exists():
+        data = await _load_json(LEGACY_LOCAL_AUTH_PATH)
+        if data and data.get("access_token"):
+            await _save_json(LOCAL_AUTH_PATH, data)
+            logger.info("Migrated token state to %s", LOCAL_AUTH_PATH)
+            try:
+                LEGACY_LOCAL_AUTH_PATH.unlink()
+                logger.info("Removed legacy source-tree token state after migration.")
+            except OSError:
+                logger.warning("Migrated token state but could not remove legacy source-tree token file.")
+    if not data or not data.get("access_token"):
+        return await init_local_state()
+    if not data.get("client_id"):
+        hermes_state = await load_from_hermes()
+        if hermes_state and hermes_state.get("client_id"):
+            data["client_id"] = hermes_state["client_id"]
+            await _save_json(LOCAL_AUTH_PATH, data)
+        else:
+            raise RuntimeError("Local token state is missing OAuth client_id. Re-authenticate xAI Grok OAuth in Hermes.")
+    return data
+
+
+def _refresh_sync(refresh_token: str, token_endpoint: str, client_id: str) -> Dict[str, Any]:
+    """Synchronous token refresh (runs in thread pool)."""
+    try:
+        resp = httpx.post(
+            token_endpoint,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": refresh_token,
+            },
+            timeout=20.0,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Token refresh request failed: {exc}") from exc
+
+    if resp.status_code != 200:
+        detail = resp.text.strip()
+        raise RuntimeError(f"Token refresh failed ({resp.status_code}): {detail}")
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"Token refresh returned invalid JSON: {exc}") from exc
+
+    new_access = str(payload.get("access_token") or "").strip()
+    if not new_access:
+        raise RuntimeError("Token refresh response missing access_token.")
+
+    return {
+        "access_token": new_access,
+        "refresh_token": str(payload.get("refresh_token") or refresh_token).strip(),
+        "token_type": str(payload.get("token_type") or "Bearer").strip() or "Bearer",
+        "expires_in": payload.get("expires_in"),
+    }
+
+
+async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Refresh xAI OAuth tokens using the local refresh_token."""
+    refresh_token = str(state.get("refresh_token") or "").strip()
+    client_id = str(state.get("client_id") or "").strip()
+    token_endpoint = _validate_token_endpoint(str(state.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
+
+    if not refresh_token:
+        raise RuntimeError("No refresh_token available. Re-authenticate with Hermes.")
+    if not client_id:
+        raise RuntimeError("No OAuth client_id available. Re-authenticate xAI Grok OAuth in Hermes.")
+
+    logger.info("Refreshing xAI OAuth token...")
+    refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
+
+    updated = dict(state)
+    updated["access_token"] = refreshed["access_token"]
+    updated["refresh_token"] = refreshed["refresh_token"]
+    updated["client_id"] = client_id
+    updated["token_type"] = refreshed["token_type"]
+    updated["expires_in"] = refreshed["expires_in"]
+    updated["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    await _save_json(LOCAL_AUTH_PATH, updated)
+    logger.info("Token refreshed successfully.")
+    return updated
+
+
+async def get_access_token(*, force_refresh: bool = False) -> str:
+    """Return a valid access_token, refreshing if needed (async-safe)."""
+    state = await read_local_state()
+    access_token = str(state.get("access_token") or "").strip()
+
+    if not access_token:
+        raise RuntimeError("No access_token available.")
+
+    should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
+    if should_refresh:
+        async with _refresh_lock:
+            # Re-read under lock in case another coroutine already refreshed
+            state = await read_local_state()
+            access_token = str(state.get("access_token") or "").strip()
+            should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
+            if should_refresh:
+                state = await refresh_access_token(state)
+                access_token = str(state.get("access_token") or "").strip()
+
+    return access_token
+
+
+async def save_local_state(data: Dict[str, Any]) -> None:
+    """Persist token state to the local auth_state.json (async-safe, atomic)."""
+    await _save_json(LOCAL_AUTH_PATH, data)
+
+
+def get_token_expiry(access_token: str) -> Optional[float]:
+    """Return the Unix timestamp when the access token expires, or None."""
+    return _decode_jwt_exp(access_token)
+
+
+async def get_auth_headers() -> Dict[str, str]:
+    """Return headers ready for an xAI API call."""
+    token = await get_access_token()
+    return {
+        "Authorization": f"Bearer {token}",
+    }

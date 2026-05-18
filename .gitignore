@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local logs/runtime artifacts
+*.log
+proxy.log
+server.log
+*.pid
+
+# Local OAuth/token state and secrets
+.env
+.env.*
+!.env.example
+auth_state.json
+xai-oauth.json
+*xai-oauth*.json
+*.tmp.*
+*.bak
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

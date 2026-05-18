@@ -1,0 +1,29 @@
+# Systemd service template for grok-oauth-proxy on Linux (headless server)
+#
+# Prefer installing through:
+#   ./install.sh --enable-service
+# or:
+#   ./install.sh --headless --enable-service
+#
+# The installer renders the __PLACEHOLDER__ values below before copying this
+# unit to /etc/systemd/system/grok-oauth-proxy.service.
+
+[Unit]
+Description=Grok OAuth Proxy (Hermes xAI)
+After=network.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+WorkingDirectory=__SERVICE_WORKDIR__
+Environment=HOME=__SERVICE_HOME__
+Environment=HERMES_AUTH_PATH=__SERVICE_HERMES_AUTH_PATH__
+Environment=PATH=__SERVICE_PATH__
+ExecStart=__SERVICE_PYTHON_BIN__ main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
