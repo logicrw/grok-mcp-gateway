@@ -6,16 +6,22 @@ import re
 from typing import Any
 
 
-_SECRET_PATTERNS = [
-    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,'\")]+"),
-    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
-    re.compile(r"(?i)((?:access|refresh|id)_token\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"(?i)(x-proxy-api-key\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"(?i)(client_secret\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"(?i)(password\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"(?i)(secret\s*[=:]\s*)[^\s,'\")]+"),
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?\s*bearer\s+)[^\"'\s,})]+"),
+        r"\1[REDACTED]",
+    ),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1[REDACTED]"),
+    (
+        re.compile(
+            r"(?i)([\"']?(?:access_token|refresh_token|id_token|x-proxy-api-key|api[_-]?key|"
+            r"client_secret|password|secret|token|session|cookie)[\"']?\s*[:=]\s*[\"']?)[^\"'\s,})]+"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\b"), "[REDACTED_JWT]"),
+    (re.compile(r"\b(?:sk|xai)-[A-Za-z0-9._-]{6,}\b"), "[REDACTED_TOKEN]"),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[REDACTED_EMAIL]"),
 ]
 
 
@@ -23,11 +29,8 @@ def sanitize_text(value: Any, *, max_length: int = 500) -> str:
     """Redact common credentials and trim to a log-safe one-line string."""
     text = str(value or "")
     text = text.replace("\r", " ").replace("\n", " ")
-    for pattern in _SECRET_PATTERNS:
-        if pattern.groups:
-            text = pattern.sub(r"\1[REDACTED]", text)
-        else:
-            text = pattern.sub("[REDACTED_EMAIL]", text)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > max_length:
         return text[: max_length - 3].rstrip() + "..."

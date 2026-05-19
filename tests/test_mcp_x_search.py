@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -25,16 +26,16 @@ def test_build_x_search_tool_keeps_only_requested_options():
         "type": "x_search",
         "allowed_x_handles": ["xai", "elonmusk"],
         "from_date": "2026-05-18",
-        "to_date": "2026-05-19",
+        "to_date": "2026-05-18",
         "enable_image_understanding": True,
     }
 
 
-def test_build_x_search_tool_treats_date_only_to_date_as_inclusive():
+def test_build_x_search_tool_keeps_date_only_to_date_inclusive():
     tool = mcp_x_search._build_x_search_tool({"from_date": "2026-05-18", "to_date": "2026-05-18"})
 
     assert tool["from_date"] == "2026-05-18"
-    assert tool["to_date"] == "2026-05-19"
+    assert tool["to_date"] == "2026-05-18"
 
 
 def test_build_x_search_tool_keeps_datetime_to_date_exact():
@@ -180,6 +181,38 @@ def test_build_posts_search_arguments_requires_handle_or_query():
         raise AssertionError("expected ValueError")
 
 
+def test_build_posts_search_arguments_rejects_unknown_keys_and_long_query():
+    try:
+        mcp_x_search._build_posts_search_arguments({"handles": ["xai"], "unknown": True})
+    except ValueError as exc:
+        assert "unsupported argument keys" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
+        mcp_x_search._build_posts_search_arguments({"query": "x" * 501})
+    except ValueError as exc:
+        assert "at most 500" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_x_search_payload_rejects_unknown_keys_and_long_query():
+    try:
+        mcp_x_search._x_search_payload({"query": "hello", "unknown": True})
+    except ValueError as exc:
+        assert "unsupported argument keys" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
+        mcp_x_search._x_search_payload({"query": "x" * 2001})
+    except ValueError as exc:
+        assert "at most 2000" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_extract_output_text_supports_responses_content_shape():
     response = {
         "output": [
@@ -209,6 +242,7 @@ def test_tools_list_returns_search_posts_and_latest_posts_tools():
     assert "time_range" in tools["x_posts"]["inputSchema"]["properties"]
     assert "best_effort_filters" in tools["x_posts"]["inputSchema"]["properties"]
     assert tools["x_posts"]["outputSchema"]["properties"]["timeline_verified"]["const"] is False
+    assert "sources" in tools["x_posts"]["outputSchema"]["required"]
     assert tools["x_latest_posts"]["inputSchema"]["required"] == ["handle"]
     assert "count" in tools["x_latest_posts"]["inputSchema"]["properties"]
 
@@ -217,6 +251,46 @@ def test_initialize_uses_structured_content_protocol_version():
     response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
 
     assert response["result"]["protocolVersion"] == "2025-06-18"
+
+
+def test_initialize_can_echo_supported_legacy_protocol_version():
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2024-11-05"},
+            }
+        )
+    )
+
+    assert response["result"]["protocolVersion"] == "2024-11-05"
+
+
+def test_tools_call_rejects_invalid_params():
+    response = asyncio.run(
+        mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": "bad"})
+    )
+
+    assert response["error"]["code"] == -32602
+    assert response["error"]["message"] == "invalid params"
+
+
+def test_tools_call_rejects_invalid_arguments():
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "x_search", "arguments": "bad"},
+            }
+        )
+    )
+
+    assert response["error"]["code"] == -32602
+    assert response["error"]["message"] == "arguments must be an object"
 
 
 def test_tools_list_respects_allowlist(monkeypatch):
@@ -328,6 +402,41 @@ def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
     assert "user@example.com" not in message
 
 
+def test_xai_responses_retries_once_on_401(monkeypatch):
+    calls = {"count": 0, "force_refresh": []}
+
+    async def fake_auth_headers():
+        return {"Authorization": "Bearer stale"}
+
+    async def fake_access_token(*, force_refresh=False):
+        calls["force_refresh"].append(force_refresh)
+        return "fresh"
+
+    def handler(request):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            assert request.headers["authorization"] == "Bearer stale"
+            return httpx.Response(401, request=request, text="expired")
+        assert request.headers["authorization"] == "Bearer fresh"
+        return httpx.Response(200, request=request, json={"output_text": "ok", "model": "grok-4.3"})
+
+    async def run():
+        monkeypatch.setattr(xai_responses.token_manager, "get_auth_headers", fake_auth_headers)
+        monkeypatch.setattr(xai_responses.token_manager, "get_access_token", fake_access_token)
+        xai_responses._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        xai_responses._client_loop = asyncio.get_running_loop()
+        try:
+            return await xai_responses.post({"model": "grok-4.3", "input": "hi", "tools": [{"type": "x_search"}]})
+        finally:
+            await xai_responses.aclose_client()
+
+    result = asyncio.run(run())
+
+    assert result.text == "ok"
+    assert calls["count"] == 2
+    assert calls["force_refresh"] == [True]
+
+
 def test_tools_call_wraps_latest_posts_result(monkeypatch):
     before = mcp_x_search._x_search_total_count
     seen = {}
@@ -358,7 +467,7 @@ def test_tools_call_wraps_latest_posts_result(monkeypatch):
     )
 
     text = response["result"]["content"][0]["text"]
-    assert text.startswith("Tool: x_latest_posts")
+    assert json.loads(text)["tool"] == "x_latest_posts"
     assert seen["allowed_x_handles"] == ["0xlogicrw"]
     assert "Return up to 3 posts" in seen["query"]
     assert response["result"]["structuredContent"]["posts"] == []
@@ -391,12 +500,58 @@ def test_tools_call_wraps_posts_result(monkeypatch):
     )
 
     text = response["result"]["content"][0]["text"]
-    assert text.startswith("Tool: x_posts")
+    assert json.loads(text)["tool"] == "x_posts"
     assert seen["allowed_x_handles"] == ["0xlogicrw"]
     assert "Hermes" in seen["query"]
     assert response["result"]["structuredContent"]["posts"][0]["text"] == "hello"
     assert response["result"]["structuredContent"]["schema_version"] == "x_posts.v1"
     assert mcp_x_search._x_search_total_count == before + 1
+
+
+def test_posts_result_does_not_trust_model_contract_fields(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            json.dumps(
+                {
+                    "schema_version": "evil",
+                    "backend": "official_x_api",
+                    "timeline_verified": True,
+                    "source_limit": "official timeline",
+                    "query_compiled": {"handles": ["evil"], "sort": "official"},
+                    "filter_reliability": {"date": "official_x_api"},
+                    "posts": [{"text": "hello", "author": "xai"}],
+                }
+            ),
+            {},
+            [],
+            None,
+            "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_posts",
+                    "arguments": {"handles": ["xai"], "query": "Hermes", "time_range": "上上周"},
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["schema_version"] == "x_posts.v1"
+    assert structured["backend"] == "xai_x_search_generated"
+    assert structured["timeline_verified"] is False
+    assert structured["source_limit"].startswith("Generated extraction")
+    assert structured["request"]["handles"] == ["xai"]
+    assert structured["filter_reliability"]["date"] == "x_search_tool_parameter"
+    assert json.loads(response["result"]["content"][0]["text"]) == structured
 
 
 def test_metrics_lines_include_x_search_counters():

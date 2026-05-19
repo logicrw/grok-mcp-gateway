@@ -20,6 +20,17 @@ TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_VERSION = "0.1.0"
 DEFAULT_MODEL = os.getenv("GROK_PROXY_MCP_MODEL", "grok-4.3").strip() or "grok-4.3"
 TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
+X_SEARCH_ARGUMENT_KEYS = {
+    "query",
+    "allowed_x_handles",
+    "excluded_x_handles",
+    "from_date",
+    "to_date",
+    "enable_image_understanding",
+    "enable_video_understanding",
+    "model",
+    "raw",
+}
 _x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
 _x_search_counts: defaultdict[str, int] = defaultdict(int)
 _x_search_total_duration: float = 0.0
@@ -118,7 +129,7 @@ def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         tool["excluded_x_handles"] = excluded_handles
 
     from_date = _clean_iso8601_date(arguments, "from_date")
-    to_date = _clean_iso8601_date(arguments, "to_date", inclusive_end=True)
+    to_date = _clean_iso8601_date(arguments, "to_date")
     _validate_date_order(from_date, to_date)
     if from_date:
         tool["from_date"] = from_date
@@ -175,9 +186,14 @@ def metrics_lines() -> list[str]:
 
 
 def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    unknown = set(arguments) - X_SEARCH_ARGUMENT_KEYS
+    if unknown:
+        raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
     query = str(arguments.get("query") or "").strip()
     if not query:
         raise ValueError("query is required")
+    if len(query) > 2000:
+        raise ValueError("query must be at most 2000 characters")
 
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
     return {

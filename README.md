@@ -1,3 +1,11 @@
+# Grok MCP Gateway
+
+Local Grok model gateway plus Hermes/xAI OAuth-backed xAI `x_search` MCP for
+local AI agents.
+
+> `x_posts` and `x_latest_posts` are generated best-effort extraction tools over
+> xAI `x_search`. They are not official X API timeline endpoints.
+
 ```mermaid
 ---
 config:
@@ -103,6 +111,19 @@ This project is not:
 - a way to make every model natively X-aware. Non-Grok models can search X only
   when their client chooses to call the exposed MCP tool.
 
+## Release Status
+
+Current status: `v0.1.0-preview` candidate.
+
+Preview means:
+
+- tested locally and in clean CI-style environments without live xAI
+  credentials;
+- live xAI smoke tests are manual because OAuth tokens are user-local;
+- `x_posts` is generated extraction, not an official X timeline;
+- MCP compatibility is verified only for clients listed in the matrix below;
+- tool schemas may still change before a stable release.
+
 ## Core Features
 
 **Grok model gateway**
@@ -202,7 +223,25 @@ curl -sS http://127.0.0.1:9996/v1/chat/completions \
   }'
 ```
 
+```bash
+curl -sS http://127.0.0.1:9996/mcp \
+  -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
 ## Configure AI Clients
+
+### Compatibility Matrix
+
+| Client | `/v1` model gateway | HTTP MCP `/mcp` | Verified date | Notes |
+| --- | --- | --- | --- | --- |
+| Alma | verified | verified | 2026-05-19 | Separate model provider and MCP config. |
+| LiteLLM | verified | not applicable | 2026-05-19 | `/v1` only. |
+| OpenAI SDK | verified | not applicable | 2026-05-19 | `/v1` only. |
+| Codex | expected | expected | not yet reverified | Local config shape is known, but client behavior should be rechecked per release. |
+| Claude Code | expected | expected | not yet reverified | Local config shape is known, but client behavior should be rechecked per release. |
+| Gemini CLI | expected | expected | not yet reverified | Local config shape is known, but client behavior should be rechecked per release. |
+| Antigravity | expected | expected | not yet reverified | Uses an HTTP MCP bridge in some setups. |
 
 ### Alma Custom Provider
 
@@ -292,7 +331,7 @@ It exposes three tools by default:
 | `allowed_x_handles` | string array | no | Restrict search to handles such as `["elonmusk", "xai"]`. |
 | `excluded_x_handles` | string array | no | Exclude handles. Cannot be used with `allowed_x_handles`. |
 | `from_date` | string | no | ISO8601 search start date, for example `2026-05-18`. |
-| `to_date` | string | no | Inclusive ISO8601 search end date, for example `2026-05-18`. Date-only values are normalized for xAI's current date-bound behavior. |
+| `to_date` | string | no | Inclusive ISO8601 search end date, for example `2026-05-18`. Date-only values are passed through unchanged. |
 | `enable_image_understanding` | boolean | no | Ask xAI to use image understanding when supported. |
 | `enable_video_understanding` | boolean | no | Ask xAI to use video understanding when supported. |
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
@@ -322,6 +361,10 @@ always labeled with `timeline_verified: false`.
 `x_posts` requires at least one of `handles` or `query`.
 `engagement_filter` is still accepted as a deprecated compatibility alias for
 `best_effort_filters`.
+
+For exact author timelines, pagination, tweet fields, public metrics, or
+compliance-sensitive use, use official X API timeline endpoints or official X
+MCP.
 
 All `x_posts` and `x_latest_posts` results include:
 

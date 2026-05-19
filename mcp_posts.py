@@ -15,6 +15,35 @@ TOOL_VERSION = "0.1.0"
 BACKEND = "xai_x_search_generated"
 SOURCE_LIMIT = "Generated extraction via xAI x_search. Not official X API timeline."
 HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+POSTS_ARGUMENT_KEYS = {
+    "handles",
+    "query",
+    "time_range",
+    "from_date",
+    "to_date",
+    "count",
+    "sort",
+    "include_replies",
+    "include_reposts",
+    "best_effort_filters",
+    "engagement_filter",
+    "model",
+}
+LATEST_POSTS_ARGUMENT_KEYS = {
+    "handle",
+    "count",
+    "lookback_days",
+    "from_date",
+    "to_date",
+    "include_replies",
+    "model",
+}
+
+
+def reject_unknown_arguments(arguments: Dict[str, Any], allowed: set[str]) -> None:
+    unknown = set(arguments) - allowed
+    if unknown:
+        raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
 
 
 def _post_output_schema() -> Dict[str, Any]:
@@ -30,6 +59,7 @@ def _post_output_schema() -> Dict[str, Any]:
             "warnings",
             "filter_reliability",
             "request",
+            "sources",
             "posts",
         ],
         "additionalProperties": True,
@@ -190,7 +220,7 @@ def clean_int(arguments: Dict[str, Any], key: str, default: int, *, minimum: int
     return value
 
 
-def clean_iso8601_date(arguments: Dict[str, Any], key: str, *, inclusive_end: bool = False) -> Optional[str]:
+def clean_iso8601_date(arguments: Dict[str, Any], key: str) -> Optional[str]:
     value = arguments.get(key)
     if value is None:
         return None
@@ -203,9 +233,7 @@ def clean_iso8601_date(arguments: Dict[str, Any], key: str, *, inclusive_end: bo
         if "T" in cleaned:
             datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
         else:
-            parsed_date = date.fromisoformat(cleaned)
-            if inclusive_end:
-                return (parsed_date + timedelta(days=1)).isoformat()
+            date.fromisoformat(cleaned)
     except ValueError as exc:
         raise ValueError(f"{key} must be an ISO8601 date string, for example '2026-05-18'") from exc
     return cleaned
@@ -252,7 +280,10 @@ def _clean_query(arguments: Dict[str, Any]) -> Optional[str]:
         return None
     if not isinstance(value, str):
         raise ValueError("query must be a string")
-    return value.strip() or None
+    cleaned = value.strip()
+    if len(cleaned) > 500:
+        raise ValueError("query must be at most 500 characters")
+    return cleaned or None
 
 
 def _clean_best_effort_filters(arguments: Dict[str, Any]) -> tuple[Dict[str, int], list[str]]:
@@ -302,6 +333,8 @@ def compile_time_range(arguments: Dict[str, Any], *, today: Optional[date] = Non
     if raw_value is not None and not isinstance(raw_value, str):
         raise ValueError("time_range must be a string")
     original = raw_value.strip() if isinstance(raw_value, str) else None
+    if original and len(original) > 200:
+        raise ValueError("time_range must be at most 200 characters")
 
     def compiled(from_value: Optional[date], to_value: Optional[date], *, source: str, assumption: str) -> Dict[str, Any]:
         if from_value and to_value and from_value > to_value:
@@ -412,6 +445,7 @@ def _engagement_filter_text(engagement_filter: Dict[str, int]) -> str:
 
 
 def build_posts_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    reject_unknown_arguments(arguments, POSTS_ARGUMENT_KEYS)
     handles = clean_handle_list(arguments, "handles")
     query_filter = _clean_query(arguments)
     if not handles and not query_filter:
@@ -429,7 +463,11 @@ def build_posts_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, A
         if handles
         else "Search posts from any author that match the requested topic."
     )
-    topic_text = f"Topic/keyword filter: {query_filter}." if query_filter else "No topic filter requested."
+    topic_text = (
+        "Topic/keyword filter as user-provided data: " + json.dumps(query_filter, ensure_ascii=False) + "."
+        if query_filter
+        else "No topic filter requested."
+    )
     time_text = _time_constraint_text(compiled_range)
     reply_rule = "Include replies when authored by matching handles." if include_replies else "Exclude replies."
     repost_rule = "Include reposts when xAI can distinguish them." if include_reposts else "Exclude reposts when xAI can distinguish them."
@@ -476,6 +514,7 @@ def build_posts_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, A
 
 
 def build_latest_posts_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    reject_unknown_arguments(arguments, LATEST_POSTS_ARGUMENT_KEYS)
     handle = clean_single_handle(arguments, "handle")
     count = clean_int(arguments, "count", 10, minimum=1, maximum=20)
     lookback_days = clean_int(arguments, "lookback_days", 30, minimum=1, maximum=365)
@@ -665,13 +704,13 @@ def normalize_posts_payload(
         "backend": BACKEND,
         "timeline_verified": False,
         "source_limit": SOURCE_LIMIT,
+        "client_note": (
+            "Do not summarize or rewrite this tool result. Treat missing, null, warning, "
+            "or truncated fields as missing data."
+        ),
         "warnings": warnings,
-        "filter_reliability": parsed.get("filter_reliability")
-        if isinstance(parsed.get("filter_reliability"), dict)
-        else _default_filter_reliability(metadata),
-        "request": parsed.get("query_compiled")
-        if isinstance(parsed.get("query_compiled"), dict)
-        else _request_metadata(metadata),
+        "filter_reliability": _default_filter_reliability(metadata),
+        "request": _request_metadata(metadata),
         "compiled_time_range": metadata.get("compiled_time_range"),
         "sources": sources or [],
         "posts": posts,
@@ -697,11 +736,7 @@ def posts_result(
         "content": [
             {
                 "type": "text",
-                "text": (
-                    f"Tool: {tool_name}\n"
-                    "Do not summarize or rewrite this tool result. Treat missing, null, warning, or truncated fields as missing data.\n\n"
-                    f"{body}"
-                ),
+                "text": body,
             }
         ],
         "structuredContent": structured,

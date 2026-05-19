@@ -13,6 +13,7 @@ import mcp_x_search
 SERVER_NAME = "grok-mcp-gateway"
 SERVER_VERSION = mcp_x_search.SERVER_VERSION
 PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
 
 
 def _result(request_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -28,10 +29,13 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     method = request.get("method")
 
     if method == "initialize":
+        params = request.get("params") or {}
+        client_version = params.get("protocolVersion") if isinstance(params, dict) else None
+        protocol_version = client_version if client_version in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
         return _result(
             request_id,
             {
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             },
@@ -44,18 +48,23 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return _result(request_id, {"tools": mcp_x_search.tool_definitions()})
     if method == "tools/call":
         params = request.get("params") or {}
+        if not isinstance(params, dict):
+            return _error(request_id, -32602, "invalid params")
         tool_name = params.get("name")
         if not isinstance(tool_name, str) or tool_name not in mcp_x_search.TOOL_NAMES:
             return _error(request_id, -32602, "unknown tool")
         if not mcp_x_search.tool_enabled(tool_name):
             return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {tool_name}")
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return _error(request_id, -32602, "arguments must be an object")
         try:
-            result = await mcp_x_search.call_tool(tool_name, params.get("arguments") or {})
+            result = await mcp_x_search.call_tool(tool_name, arguments)
             return _result(request_id, result)
         except Exception as exc:
             return _result(
                 request_id,
-                {"content": [{"type": "text", "text": f"x_search failed: {sanitize_text(exc)}"}], "isError": True},
+                {"content": [{"type": "text", "text": f"{tool_name} failed: {sanitize_text(exc)}"}], "isError": True},
             )
 
     return _error(request_id, -32601, f"method not found: {method}")

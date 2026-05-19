@@ -1,3 +1,11 @@
+# Grok MCP Gateway
+
+本地 Grok 模型 gateway，加上基于 Hermes/xAI OAuth 的 xAI `x_search` MCP，
+供本地 AI Agent 客户端共用。
+
+> `x_posts` 和 `x_latest_posts` 是基于 xAI `x_search` 的 generated
+> best-effort 抽取工具，不是官方 X API timeline endpoint。
+
 ```mermaid
 ---
 config:
@@ -98,6 +106,18 @@ MCP 工具层调用 OAuth-backed X Search。
 - 让所有模型“原生懂 X”的魔法。非 Grok 模型只有在客户端主动调用 MCP 工具时
   才能搜索 X。
 
+## 发布状态
+
+当前状态：`v0.1.0-preview` candidate。
+
+Preview 表示：
+
+- 已在本地和无 live xAI credentials 的 clean CI 风格环境中测试；
+- live xAI smoke test 需要手动运行，因为 OAuth token 属于用户本机；
+- `x_posts` 是 generated extraction，不是官方 X timeline；
+- MCP 兼容性只对下方矩阵里的客户端声明验证状态；
+- stable release 前 tool schema 仍可能变化。
+
 ## 核心能力
 
 **Grok 模型 gateway**
@@ -191,7 +211,25 @@ curl -sS http://127.0.0.1:9996/v1/chat/completions \
   }'
 ```
 
+```bash
+curl -sS http://127.0.0.1:9996/mcp \
+  -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
 ## 配置 AI 客户端
+
+### 兼容性矩阵
+
+| Client | `/v1` model gateway | HTTP MCP `/mcp` | 验证日期 | 说明 |
+| --- | --- | --- | --- | --- |
+| Alma | verified | verified | 2026-05-19 | model provider 和 MCP config 分开配置。 |
+| LiteLLM | verified | 不适用 | 2026-05-19 | 只使用 `/v1`。 |
+| OpenAI SDK | verified | 不适用 | 2026-05-19 | 只使用 `/v1`。 |
+| Codex | expected | expected | 尚未重新验证 | 本地配置形态已知，但每个 release 应重新确认客户端行为。 |
+| Claude Code | expected | expected | 尚未重新验证 | 本地配置形态已知，但每个 release 应重新确认客户端行为。 |
+| Gemini CLI | expected | expected | 尚未重新验证 | 本地配置形态已知，但每个 release 应重新确认客户端行为。 |
+| Antigravity | expected | expected | 尚未重新验证 | 某些配置需要 HTTP MCP bridge。 |
 
 ### Alma Custom Provider
 
@@ -279,7 +317,7 @@ POST http://127.0.0.1:9996/mcp
 | `allowed_x_handles` | string array | 否 | 限定搜索账号，例如 `["elonmusk", "xai"]`。 |
 | `excluded_x_handles` | string array | 否 | 排除指定账号。不能和 `allowed_x_handles` 同时使用。 |
 | `from_date` | string | 否 | ISO8601 搜索起始日期，例如 `2026-05-18`。 |
-| `to_date` | string | 否 | 包含当天的 ISO8601 搜索结束日期，例如 `2026-05-18`。date-only 值会由 proxy 适配 xAI 当前日期边界行为。 |
+| `to_date` | string | 否 | 包含当天的 ISO8601 搜索结束日期，例如 `2026-05-18`。date-only 值会原样传给 xAI。 |
 | `enable_image_understanding` | boolean | 否 | 支持时让 xAI 使用图片理解。 |
 | `enable_video_understanding` | boolean | 否 | 支持时让 xAI 使用视频理解。 |
 | `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
@@ -308,6 +346,9 @@ gateway 会先编译常见时间表达，并要求返回 `x_posts.v1` 结构化 
 `x_posts` 至少需要 `handles` 或 `query` 其中之一。
 `engagement_filter` 仍然会作为兼容旧配置的 deprecated alias 被接受，建议改用
 `best_effort_filters`。
+
+如果需要精确作者 timeline、分页、tweet fields、public metrics 或合规敏感用途，
+请使用官方 X API timeline endpoint 或官方 X MCP。
 
 `x_posts` 和 `x_latest_posts` 的结果都会包含：
 

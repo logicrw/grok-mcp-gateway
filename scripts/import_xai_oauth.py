@@ -13,8 +13,13 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
+
+
+XAI_TOKEN_ENDPOINT = "https://auth.x.ai/oauth2/token"
 
 
 def hermes_auth_path() -> Path:
@@ -36,6 +41,44 @@ def proxy_auth_state_path() -> Path:
     return Path(
         os.getenv("GROK_PROXY_AUTH_STATE", str(state_home / "grok-oauth-proxy" / "auth_state.json"))
     ).expanduser()
+
+
+def validate_token_endpoint(endpoint: str) -> str:
+    cleaned = (endpoint or XAI_TOKEN_ENDPOINT).strip()
+    parsed = urlparse(cleaned)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "auth.x.ai"
+        or parsed.path != "/oauth2/token"
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        print("ERROR: Refusing untrusted xAI token_endpoint in export file.", file=sys.stderr)
+        sys.exit(1)
+    return cleaned
+
+
+def atomic_write_json(path: Path, data: dict) -> None:
+    tmp_path = None
+    fd = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        tmp_path = Path(tmp_name)
+        os.chmod(tmp_path, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +122,15 @@ def main() -> None:
     if "xai-oauth" not in export_data:
         print("ERROR: Invalid export file. 'xai-oauth' key not found.", file=sys.stderr)
         sys.exit(1)
+    xai_oauth = export_data["xai-oauth"]
+    if not isinstance(xai_oauth, dict):
+        print("ERROR: Invalid export file. 'xai-oauth' must be an object.", file=sys.stderr)
+        sys.exit(1)
+    discovery = xai_oauth.setdefault("discovery", {})
+    if not isinstance(discovery, dict):
+        print("ERROR: Invalid export file. 'xai-oauth.discovery' must be an object.", file=sys.stderr)
+        sys.exit(1)
+    discovery["token_endpoint"] = validate_token_endpoint(str(discovery.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
 
     auth_path = hermes_auth_path()
     hermes_dir = auth_path.parent
@@ -101,7 +153,7 @@ def main() -> None:
 
     # Merge xai-oauth without touching other providers.
     hermes_data.setdefault("providers", {})
-    hermes_data["providers"]["xai-oauth"] = export_data["xai-oauth"]
+    hermes_data["providers"]["xai-oauth"] = xai_oauth
     hermes_data["updated_at"] = utc_now()
 
     # Backup existing file.
@@ -111,12 +163,7 @@ def main() -> None:
         os.chmod(backup, 0o600)
         print(f"Backed up existing auth to {backup}")
 
-    # Write with strict permissions.
-    with auth_path.open("w", encoding="utf-8") as f:
-        json.dump(hermes_data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-    os.chmod(auth_path, 0o600)
+    atomic_write_json(auth_path, hermes_data)
 
     if not args.no_reset_proxy_state:
         reset_proxy_state()

@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 XAI_RESPONSES_URL = f"{token_manager.XAI_API_BASE}/v1/responses"
 _client: Optional[httpx.AsyncClient] = None
 _client_loop: Optional[asyncio.AbstractEventLoop] = None
+_client_lock: Optional[asyncio.Lock] = None
+_client_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 @dataclass
@@ -87,10 +89,26 @@ def _extract_citations(response: Dict[str, Any]) -> list[Dict[str, Any]]:
 async def get_client() -> httpx.AsyncClient:
     global _client, _client_loop
     current_loop = asyncio.get_running_loop()
-    if _client is None or _client.is_closed or _client_loop is not current_loop:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
-        _client_loop = current_loop
+    lock = _client_creation_lock(current_loop)
+    async with lock:
+        if _client is None or _client.is_closed or _client_loop is not current_loop:
+            old_client = _client
+            if old_client is not None and not old_client.is_closed:
+                try:
+                    await old_client.aclose()
+                except RuntimeError:
+                    logger.debug("Could not close xAI Responses client from a previous event loop.")
+            _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            _client_loop = current_loop
     return _client
+
+
+def _client_creation_lock(loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
+    global _client_lock, _client_lock_loop
+    if _client_lock is None or _client_lock_loop is not loop:
+        _client_lock = asyncio.Lock()
+        _client_lock_loop = loop
+    return _client_lock
 
 
 async def aclose_client() -> None:
@@ -101,14 +119,26 @@ async def aclose_client() -> None:
     _client_loop = None
 
 
-async def post(payload: Dict[str, Any]) -> ResponsesResult:
-    headers = {
+async def _headers(*, force_refresh: bool = False) -> Dict[str, str]:
+    if force_refresh:
+        token = await token_manager.get_access_token(force_refresh=True)
+        auth_headers = {"Authorization": f"Bearer {token}"}
+    else:
+        auth_headers = await token_manager.get_auth_headers()
+    return {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        **await token_manager.get_auth_headers(),
+        **auth_headers,
     }
+
+
+async def post(payload: Dict[str, Any]) -> ResponsesResult:
+    headers = await _headers()
     client = await get_client()
     response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
+    if response.status_code == 401:
+        headers = await _headers(force_refresh=True)
+        response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
     if response.status_code >= 400:
         if config.GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS:
             logger.debug("xAI Responses upstream error body: %s", sanitize_text(response.text))

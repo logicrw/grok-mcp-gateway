@@ -1,6 +1,6 @@
 """Grok MCP Gateway — local reverse proxy to api.x.ai using Hermes xAI OAuth tokens.
 
-Runs independently on a local port (default 9996, scans upward if taken).
+Runs independently on a fixed local port (default 9996).
 Features: token prewarm, Hermes auth.json watch, deep health, request logging,
 upstream retry, Prometheus metrics.
 """
@@ -77,12 +77,16 @@ def _is_loopback_host(host: str) -> bool:
 
 def _validate_startup_security(host: str, proxy_api_key: Optional[str]) -> None:
     """Refuse unauthenticated non-loopback binds."""
-    if not _is_loopback_host(host) and not proxy_api_key:
+    if _is_loopback_host(host):
+        return
+    if not proxy_api_key:
         raise RuntimeError(
             "PROXY_API_KEY is required when PROXY_HOST is not loopback. "
             "This proxy injects live xAI OAuth credentials and must not be "
             "exposed without an authentication layer."
         )
+    if len(proxy_api_key) < 16:
+        raise RuntimeError("PROXY_API_KEY must be at least 16 characters when PROXY_HOST is not loopback.")
 
 
 def _request_has_valid_proxy_api_key(headers: Mapping[str, str], proxy_api_key: Optional[str]) -> bool:

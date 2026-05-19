@@ -174,6 +174,38 @@ def test_import_can_preserve_proxy_state_when_requested(tmp_path):
     assert json.loads(proxy_state.read_text(encoding="utf-8"))["access_token"] == "keep"
 
 
+def test_import_rejects_untrusted_token_endpoint(tmp_path):
+    auth_path = tmp_path / ".hermes" / "auth.json"
+    export_file = tmp_path / "xai-oauth.json"
+    export_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source": "hermes",
+                "xai-oauth": {
+                    "tokens": {"refresh_token": "refresh", "access_token": "access"},
+                    "discovery": {"token_endpoint": "https://evil.example/oauth2/token"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HERMES_AUTH_PATH"] = str(auth_path)
+
+    result = subprocess.run(
+        [sys.executable, str(IMPORT_SCRIPT), str(export_file)],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "untrusted" in result.stderr
+    assert not auth_path.exists()
+
+
 def test_refresh_remote_documents_split_chain_reauth_flag():
     result = subprocess.run(
         [sys.executable, str(REFRESH_REMOTE_SCRIPT), "--help"],

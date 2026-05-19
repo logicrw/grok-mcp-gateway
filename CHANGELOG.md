@@ -18,6 +18,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - Add `GROK_GATEWAY_PORT_AUTOSCAN` and keep service mode fail-fast on occupied
   ports by default.
 - Add `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` for sanitized debug logging.
+- Add clean-environment MCP HTTP tests, stricter sanitizer coverage, invalid MCP
+  params tests, and xAI 401 refresh-retry tests.
 - Document the project scope explicitly so users do not confuse it with a
   general MCP router, Node.js template, Docker deployment, or official X API MCP
   replacement.
@@ -38,6 +40,12 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   normal startup exceptions instead of calling `sys.exit()`.
 - Update README and service examples to make the official X API boundary and
   LaunchAgent/systemd environment requirements explicit.
+- Keep date-only `to_date` values unchanged to match xAI's inclusive date-range
+  documentation.
+- Make `x_posts.v1` contract fields gateway-owned instead of trusting generated
+  model JSON for `request`, `filter_reliability`, `backend`, or
+  `timeline_verified`.
+- Return pure serialized JSON in MCP text content for post-extraction results.
 
 ## 2026-05-18
 

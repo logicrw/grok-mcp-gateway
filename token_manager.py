@@ -309,7 +309,7 @@ def _refresh_sync(refresh_token: str, token_endpoint: str, client_id: str) -> Di
             timeout=20.0,
         )
     except Exception as exc:
-        raise RuntimeError(f"Token refresh request failed: {exc}") from exc
+        raise RuntimeError(f"Token refresh request failed: {sanitize_text(exc)}") from exc
 
     if resp.status_code != 200:
         logger.debug("Token refresh failed upstream body: %s", sanitize_text(resp.text))

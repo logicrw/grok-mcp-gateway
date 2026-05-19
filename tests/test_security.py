@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
+from error_sanitizer import sanitize_text
 import main
 import token_manager
 
@@ -83,11 +84,41 @@ def test_non_loopback_bind_requires_proxy_api_key(host):
         main._validate_startup_security(host, proxy_api_key=None)
 
 
+def test_non_loopback_bind_rejects_short_proxy_api_key():
+    with pytest.raises(RuntimeError, match="at least 16"):
+        main._validate_startup_security("0.0.0.0", proxy_api_key="short")
+
+    main._validate_startup_security("0.0.0.0", proxy_api_key="long-enough-secret")
+
+
 def test_proxy_api_key_accepts_bearer_or_x_proxy_header():
     assert main._request_has_valid_proxy_api_key({"authorization": "Bearer secret"}, "secret")
     assert main._request_has_valid_proxy_api_key({"x-proxy-api-key": "secret"}, "secret")
     assert not main._request_has_valid_proxy_api_key({"authorization": "Bearer wrong"}, "secret")
     assert not main._request_has_valid_proxy_api_key({}, "secret")
+
+
+def test_sanitize_text_redacts_common_secret_shapes():
+    secret = (
+        '"refresh_token":"abc.def.ghi" '
+        "'access_token': 'abc.def.ghi' "
+        'api_key="sk-abcdef123456" '
+        "token=plain-secret "
+        "Authorization: Bearer bearer-secret-value "
+        "jwt=eyJhbGciOiJub25l.eyJzdWIiOiIxIn0.signature "
+        "email=user@example.com "
+        "cookie=session-secret"
+    )
+
+    sanitized = sanitize_text(secret)
+
+    assert "abc.def.ghi" not in sanitized
+    assert "sk-abcdef123456" not in sanitized
+    assert "plain-secret" not in sanitized
+    assert "bearer-secret-value" not in sanitized
+    assert "eyJhbGci" not in sanitized
+    assert "user@example.com" not in sanitized
+    assert "session-secret" not in sanitized
 
 
 def test_find_port_fails_fast_when_autoscan_disabled():
@@ -362,7 +393,12 @@ def test_health_reports_expired_token_state(monkeypatch):
     assert "token expired" in response.json()["detail"]
 
 
-def test_http_mcp_lists_x_search_tool():
+def test_http_mcp_lists_x_search_tool(monkeypatch):
+    async def fake_preflight_startup():
+        return None
+
+    monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
+
     with TestClient(main.app) as client:
         response = client.post(
             "/mcp",
@@ -373,7 +409,12 @@ def test_http_mcp_lists_x_search_tool():
     assert response.json()["result"]["tools"][0]["name"] == "x_search"
 
 
-def test_http_mcp_notifications_return_accepted():
+def test_http_mcp_notifications_return_accepted(monkeypatch):
+    async def fake_preflight_startup():
+        return None
+
+    monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
+
     with TestClient(main.app) as client:
         response = client.post(
             "/mcp",
