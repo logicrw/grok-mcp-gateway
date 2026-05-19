@@ -34,6 +34,15 @@ that AI clients can use in two ways:
 2. **Tool access:** expose xAI `x_search` as a resident HTTP MCP tool so
    non-Grok models can search X through the client tool layer.
 
+Important boundary: `x_posts` and `x_latest_posts` are structured best-effort
+extraction tools over xAI `x_search`. They are not official X API timeline
+endpoints, do not provide official pagination, and do not guarantee exact
+metrics. Use the official X API or official X MCP server for API-grade
+timelines, posting, compliance, or bulk data access.
+
+No X Developer API credentials are required for this gateway. It uses the
+Hermes/xAI OAuth session and xAI's `x_search` backend instead.
+
 This is the main difference of this fork: Alma, Claude Code-style clients,
 Antigravity, Codex, Gemini CLI, LiteLLM, and other local agent setups can share
 one proxy process for both Grok model calls and MCP X Search.
@@ -88,7 +97,8 @@ This project is not:
 
 - a general MCP router, MCP marketplace, or remote-tool aggregator;
 - a replacement for the official X API MCP server when you need posting,
-  account management, or broader X API actions;
+  account management, official timelines, pagination, metrics, compliance
+  archives, or broader X API actions;
 - a Node.js, npm, Express, Docker, or Heroku template;
 - a way to make every model natively X-aware. Non-Grok models can search X only
   when their client chooses to call the exposed MCP tool.
@@ -169,7 +179,9 @@ The default endpoint is:
 http://127.0.0.1:9996
 ```
 
-If port `9996` is occupied, the app scans upward for an available port.
+Service mode fails fast if port `9996` is occupied, because local clients are
+usually pinned to that port. Set `PROXY_PORT` to another value, or enable
+`GROK_GATEWAY_PORT_AUTOSCAN=1` only for development.
 
 ### 4. Smoke Test
 
@@ -268,8 +280,8 @@ POST http://127.0.0.1:9996/mcp
 It exposes three tools by default:
 
 - `x_search` for open-ended X search and topic discovery.
-- `x_posts` for structured post extraction by handles, topic, flexible time
-  range, and best-effort engagement filters.
+- `x_posts` for structured best-effort post extraction by handles, topic,
+  flexible time range, and best-effort filters.
 - `x_latest_posts` as a convenience shortcut for recent posts from one handle.
 
 ### `x_search`
@@ -288,9 +300,10 @@ It exposes three tools by default:
 
 ### `x_posts`
 
-This is the strict extraction surface. It still uses xAI `x_search` under the
-hood, but the gateway compiles common time phrases and asks for structured JSON
-instead of a prose summary.
+This is the structured best-effort extraction surface. It still uses xAI
+`x_search` under the hood, but the gateway compiles common time phrases and
+asks for `x_posts.v1` structured JSON instead of a prose summary. The result is
+always labeled with `timeline_verified: false`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -300,13 +313,37 @@ instead of a prose summary.
 | `from_date` | string | no | ISO8601 search start date. Overrides `time_range` start. |
 | `to_date` | string | no | Inclusive ISO8601 search end date. Overrides `time_range` end. |
 | `count` | integer | no | Target number of posts. Defaults to `10`, max `20`. |
-| `sort` | string | no | `latest`, `relevance`, or `popular`. Defaults to `latest`; `popular` is best-effort. |
+| `sort` | string | no | `latest` or `relevance`. Defaults to `latest`. |
 | `include_replies` | boolean | no | Whether replies may be included when xAI can find them. Defaults to `true`. |
 | `include_reposts` | boolean | no | Whether reposts may be included when xAI can distinguish them. Defaults to `true`. |
-| `engagement_filter` | object | no | Best-effort filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. |
+| `best_effort_filters` | object | no | Best-effort prompt filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. These are not official X API filters. |
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
 
 `x_posts` requires at least one of `handles` or `query`.
+`engagement_filter` is still accepted as a deprecated compatibility alias for
+`best_effort_filters`.
+
+All `x_posts` and `x_latest_posts` results include:
+
+```json
+{
+  "schema_version": "x_posts.v1",
+  "tool_version": "0.1.0",
+  "backend": "xai_x_search_generated",
+  "timeline_verified": false,
+  "source_limit": "Generated extraction via xAI x_search. Not official X API timeline.",
+  "warnings": [],
+  "filter_reliability": {
+    "author": "x_search_tool_parameter",
+    "date": "x_search_tool_parameter",
+    "query": "prompt_filter",
+    "engagement": "best_effort_prompt_filter"
+  },
+  "request": {},
+  "sources": [],
+  "posts": []
+}
+```
 
 ### `x_latest_posts`
 
@@ -369,7 +406,7 @@ curl -sS http://127.0.0.1:9996/mcp \
         "time_range": "上上周",
         "count": 10,
         "sort": "latest",
-        "engagement_filter": {
+        "best_effort_filters": {
           "min_views": 10000000
         }
       }
@@ -526,7 +563,8 @@ sudo systemctl enable --now grok-mcp-gateway
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PROXY_HOST` | `127.0.0.1` | Bind address. Non-loopback binds require `PROXY_API_KEY`. |
-| `PROXY_PORT` | `9996` | Base port. If occupied, scans upward. |
+| `PROXY_PORT` | `9996` | Fixed listen port by default. If occupied, startup fails unless `GROK_GATEWAY_PORT_AUTOSCAN=1` is set. |
+| `GROK_GATEWAY_PORT_AUTOSCAN` | `false` | Development-only port scan fallback. Keep disabled for resident client configs pinned to `9996`. |
 | `PROXY_API_KEY` | unset | Optional local proxy auth key. Required when binding outside loopback. Accepted as `Authorization: Bearer <key>` or `X-Proxy-Api-Key: <key>`. |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | Proxy-owned OAuth token state. |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth store. |
@@ -538,6 +576,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | Default xAI model used by MCP `x_search`. |
 | `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_posts,x_latest_posts` | Comma-separated MCP tool allowlist. Set it explicitly before adding or exposing more tools. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Max concurrent MCP `x_search` calls. |
+| `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` | `false` | Log sanitized upstream error bodies for debugging. Tool results never return raw upstream bodies. |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | Inject xAI `x_search` into `/v1/responses` requests. |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | unset | Comma-separated handle allowlist for auto-injected X Search. |
 | `GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING` | `false` | Enable image understanding for auto-injected X Search. |
@@ -553,7 +592,7 @@ for upgrade compatibility with earlier installs.
 | `/health` | `GET` | Local status and token expiry. |
 | `/health?deep=1` | `GET` | Status plus a real upstream `/v1/models` check. |
 | `/metrics` | `GET` | Prometheus-compatible metrics. |
-| `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint exposing `x_search`. |
+| `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint exposing `x_search`, `x_posts`, and `x_latest_posts` by default. |
 | `/{path:path}` | any | Forwarded to `https://api.x.ai/{path}`. |
 
 ## Security Notes
@@ -561,6 +600,8 @@ for upgrade compatibility with earlier installs.
 - Keep the proxy on `127.0.0.1` unless you have a clear reason to expose it.
 - If binding to `0.0.0.0` or another non-loopback address, set `PROXY_API_KEY`
   and put TLS/authentication in front of it when crossing machines.
+- `PROXY_API_KEY` is a shared bearer secret, not transport security. Use SSH
+  tunneling or a TLS reverse proxy for any non-local traffic.
 - Do not commit `auth_state.json`, `.hermes/auth.json`, exported
   `xai-oauth.json`, logs containing bearer tokens, or service files with real
   credentials.

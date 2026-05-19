@@ -34,6 +34,14 @@ Grok MCP Gateway 会把 Hermes Agent 里的 xAI OAuth 会话变成本地 gateway
 2. **工具接入：** 把 xAI `x_search` 暴露成常驻 HTTP MCP 工具，让非 Grok
    模型也能通过客户端工具层搜索 X。
 
+重要边界：`x_posts` 和 `x_latest_posts` 是基于 xAI `x_search` 的结构化
+best-effort 抽取工具。它们不是官方 X API timeline endpoint，不提供官方分页，
+也不保证互动指标完全准确。需要 API 级 timeline、发帖、合规归档或批量数据时，
+应使用官方 X API 或官方 X MCP server。
+
+这个 gateway 不需要 X Developer API credentials。它使用的是 Hermes/xAI OAuth
+会话和 xAI 的 `x_search` backend。
+
 这个 fork 最大的不同点是：Alma、Claude Code 风格客户端、Antigravity、
 Codex、Gemini CLI、LiteLLM，以及其他本地 Agent 工作流，可以共享同一个
 proxy 进程，同时获得 Grok 模型调用和 MCP X Search 能力。
@@ -84,8 +92,8 @@ MCP 工具层调用 OAuth-backed X Search。
 这个项目不是：
 
 - 通用 MCP router、MCP marketplace，或远程工具聚合器；
-- 官方 X API MCP server 的替代品。如果你需要发帖、账号管理或更完整的 X API
-  操作，应同时运行官方 X MCP；
+- 官方 X API MCP server 的替代品。如果你需要发帖、账号管理、官方 timeline、
+  分页、指标、合规归档或更完整的 X API 操作，应同时运行官方 X MCP；
 - Node.js、npm、Express、Docker 或 Heroku 模板；
 - 让所有模型“原生懂 X”的魔法。非 Grok 模型只有在客户端主动调用 MCP 工具时
   才能搜索 X。
@@ -161,7 +169,8 @@ python main.py
 http://127.0.0.1:9996
 ```
 
-如果 `9996` 被占用，程序会向上寻找可用端口。
+服务模式下如果 `9996` 被占用会直接失败，因为本地客户端通常固定写这个端口。
+可以改 `PROXY_PORT`，或者只在开发时设置 `GROK_GATEWAY_PORT_AUTOSCAN=1`。
 
 ### 4. Smoke Test
 
@@ -259,7 +268,7 @@ POST http://127.0.0.1:9996/mcp
 默认暴露三个工具：
 
 - `x_search`：用于开放式 X 搜索和话题发现。
-- `x_posts`：用于按账号、话题、自然语言时间范围和简单互动条件抽取帖子。
+- `x_posts`：用于按账号、话题、自然语言时间范围和 best-effort 条件抽取帖子。
 - `x_latest_posts`：单账号最新帖的快捷入口。
 
 ### `x_search`
@@ -278,8 +287,9 @@ POST http://127.0.0.1:9996/mcp
 
 ### `x_posts`
 
-这是更严格的帖子抽取工具。它底层仍然使用 xAI `x_search`，但 gateway 会先编译
-常见时间表达，并要求返回结构化 JSON，而不是让模型写成普通摘要。
+这是结构化 best-effort 帖子抽取工具。它底层仍然使用 xAI `x_search`，但
+gateway 会先编译常见时间表达，并要求返回 `x_posts.v1` 结构化 JSON，而不是
+让模型写成普通摘要。结果会固定标记 `timeline_verified: false`。
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -289,13 +299,37 @@ POST http://127.0.0.1:9996/mcp
 | `from_date` | string | 否 | ISO8601 搜索起始日期，会覆盖 `time_range` 的起点。 |
 | `to_date` | string | 否 | 包含当天的 ISO8601 搜索结束日期，会覆盖 `time_range` 的终点。 |
 | `count` | integer | 否 | 目标返回帖子数，默认 `10`，最大 `20`。 |
-| `sort` | string | 否 | `latest`、`relevance` 或 `popular`。默认 `latest`，`popular` 为 best-effort。 |
+| `sort` | string | 否 | `latest` 或 `relevance`。默认 `latest`。 |
 | `include_replies` | boolean | 否 | xAI 能找到时是否允许包含回复，默认 `true`。 |
 | `include_reposts` | boolean | 否 | xAI 能区分时是否允许包含转帖，默认 `true`。 |
-| `engagement_filter` | object | 否 | best-effort 互动过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。 |
+| `best_effort_filters` | object | 否 | best-effort prompt 过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。这不是官方 X API 过滤。 |
 | `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
 
 `x_posts` 至少需要 `handles` 或 `query` 其中之一。
+`engagement_filter` 仍然会作为兼容旧配置的 deprecated alias 被接受，建议改用
+`best_effort_filters`。
+
+`x_posts` 和 `x_latest_posts` 的结果都会包含：
+
+```json
+{
+  "schema_version": "x_posts.v1",
+  "tool_version": "0.1.0",
+  "backend": "xai_x_search_generated",
+  "timeline_verified": false,
+  "source_limit": "Generated extraction via xAI x_search. Not official X API timeline.",
+  "warnings": [],
+  "filter_reliability": {
+    "author": "x_search_tool_parameter",
+    "date": "x_search_tool_parameter",
+    "query": "prompt_filter",
+    "engagement": "best_effort_prompt_filter"
+  },
+  "request": {},
+  "sources": [],
+  "posts": []
+}
+```
 
 ### `x_latest_posts`
 
@@ -358,7 +392,7 @@ curl -sS http://127.0.0.1:9996/mcp \
         "time_range": "上上周",
         "count": 10,
         "sort": "latest",
-        "engagement_filter": {
+        "best_effort_filters": {
           "min_views": 10000000
         }
       }
@@ -512,7 +546,8 @@ sudo systemctl enable --now grok-mcp-gateway
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PROXY_HOST` | `127.0.0.1` | 绑定地址。非 loopback 必须设置 `PROXY_API_KEY`。 |
-| `PROXY_PORT` | `9996` | 起始端口。被占用时向上寻找。 |
+| `PROXY_PORT` | `9996` | 默认固定监听端口。被占用时启动失败，除非设置 `GROK_GATEWAY_PORT_AUTOSCAN=1`。 |
+| `GROK_GATEWAY_PORT_AUTOSCAN` | `false` | 仅建议开发时使用的端口扫描 fallback。常驻客户端固定配置 `9996` 时应保持关闭。 |
 | `PROXY_API_KEY` | 未设置 | 可选本地 proxy auth key。非 loopback 必须设置。支持 `Authorization: Bearer <key>` 或 `X-Proxy-Api-Key: <key>`。 |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | proxy 自己的 OAuth token state。 |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth 文件。 |
@@ -524,6 +559,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `GROK_PROXY_MCP_MODEL` | `grok-4.3` | MCP `x_search` 默认使用的 xAI 模型。 |
 | `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_search,x_posts,x_latest_posts` | MCP 工具 allowlist，逗号分隔。新增或暴露更多工具前应显式配置。 |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | MCP `x_search` 最大并发调用数。 |
+| `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` | `false` | 调试时记录脱敏后的 upstream 错误 body。工具结果永远不会返回原始 upstream body。 |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | 是否向 `/v1/responses` 请求注入 xAI `x_search`。 |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | 未设置 | Auto-injected X Search 的账号 allowlist，逗号分隔。 |
 | `GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING` | `false` | Auto-injected X Search 是否启用图片理解。 |
@@ -539,7 +575,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `/health` | `GET` | 本地状态和 token 到期时间。 |
 | `/health?deep=1` | `GET` | 本地状态 + 真实 upstream `/v1/models` 检查。 |
 | `/metrics` | `GET` | Prometheus-compatible metrics。 |
-| `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint，暴露 `x_search`。 |
+| `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint，默认暴露 `x_search`、`x_posts`、`x_latest_posts`。 |
 | `/{path:path}` | any | 转发到 `https://api.x.ai/{path}`。 |
 
 ## 安全说明
@@ -547,6 +583,8 @@ sudo systemctl enable --now grok-mcp-gateway
 - 除非明确需要暴露服务，否则保持绑定 `127.0.0.1`。
 - 如果绑定 `0.0.0.0` 或其他非 loopback 地址，必须设置 `PROXY_API_KEY`，
   跨机器使用时还应放在 TLS/authentication 后面。
+- `PROXY_API_KEY` 是共享 bearer secret，不是传输层安全。跨机器访问时请使用
+  SSH tunnel 或 TLS reverse proxy。
 - 不要提交 `auth_state.json`、`.hermes/auth.json`、导出的 `xai-oauth.json`、
   包含 bearer token 的日志，或写入真实凭据的 service 文件。
 - proxy 转发到 xAI 前会移除传入的 `Authorization`、`Proxy-Authorization`、

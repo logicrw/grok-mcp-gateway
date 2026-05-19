@@ -28,6 +28,8 @@ xai-oauth.json
 *xai-oauth*.json
 *.tmp.*
 *.bak
+launchagent-*.txt
+*.plist.local
 
 # OS/editor
 .DS_Store

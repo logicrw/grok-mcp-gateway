@@ -25,6 +25,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 import config
+from error_sanitizer import sanitize_text
 
 HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
 _STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
@@ -246,11 +247,13 @@ async def load_from_hermes(auth_path: Optional[Path] = None) -> Optional[Dict[st
 
 async def init_local_state() -> Dict[str, Any]:
     """Bootstrap local auth_state.json from Hermes (if present)."""
-    if not shutil.which("hermes"):
-        raise RuntimeError(
-            "Hermes Agent CLI not found. Install Hermes and complete xAI Grok OAuth before starting this proxy."
-        )
     if not HERMES_AUTH_PATH.exists():
+        if not shutil.which("hermes"):
+            raise RuntimeError(
+                "Hermes auth.json not found and Hermes Agent CLI is unavailable. "
+                "Install Hermes and complete xAI Grok OAuth, or import xAI OAuth credentials with "
+                "scripts/import_xai_oauth.py on this host."
+            )
         raise RuntimeError(
             "Hermes auth.json not found. Install and configure Hermes before starting this proxy."
         )
@@ -309,8 +312,8 @@ def _refresh_sync(refresh_token: str, token_endpoint: str, client_id: str) -> Di
         raise RuntimeError(f"Token refresh request failed: {exc}") from exc
 
     if resp.status_code != 200:
-        detail = resp.text.strip()
-        raise RuntimeError(f"Token refresh failed ({resp.status_code}): {detail}")
+        logger.debug("Token refresh failed upstream body: %s", sanitize_text(resp.text))
+        raise RuntimeError(f"Token refresh failed ({resp.status_code})")
 
     try:
         payload = resp.json()

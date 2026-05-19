@@ -6,6 +6,18 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Added
 
+- Add a fixed `x_posts.v1` MCP output contract with `schema_version`,
+  `tool_version`, `backend`, `timeline_verified=false`, `warnings`,
+  `filter_reliability`, `request`, `sources`, and normalized `posts`.
+- Add `mcp_server.py` as the JSON-RPC protocol layer and `xai_responses.py` as
+  the shared xAI Responses API adapter.
+- Add sanitized upstream error handling for MCP tool calls and token refresh
+  failures.
+- Add headless bootstrap support when imported `HERMES_AUTH_PATH` credentials
+  already exist but the Hermes CLI is not installed.
+- Add `GROK_GATEWAY_PORT_AUTOSCAN` and keep service mode fail-fast on occupied
+  ports by default.
+- Add `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` for sanitized debug logging.
 - Document the project scope explicitly so users do not confuse it with a
   general MCP router, Node.js template, Docker deployment, or official X API MCP
   replacement.
@@ -14,6 +26,18 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   `x_search` backend.
 - Keep `x_latest_posts` as a shortcut for the common single-handle latest-posts
   workflow.
+
+### Changed
+
+- Rename `engagement_filter` to `best_effort_filters` in the public `x_posts`
+  schema. The old key is still accepted as a deprecated compatibility alias.
+- Restrict `x_posts` sorting to `latest` and `relevance` to avoid implying
+  API-grade popularity sorting.
+- Upgrade MCP initialize responses to protocol version `2025-06-18`.
+- Move startup hard exits to the CLI boundary; FastAPI lifespan now raises
+  normal startup exceptions instead of calling `sys.exit()`.
+- Update README and service examples to make the official X API boundary and
+  LaunchAgent/systemd environment requirements explicit.
 
 ## 2026-05-18
 

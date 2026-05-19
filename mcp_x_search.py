@@ -3,28 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import sys
 import time
 from collections import defaultdict
 from datetime import date
 from typing import Any, Dict, Optional
 
-import httpx
-
 import config
 import mcp_posts
-import token_manager
+import xai_responses
 
 X_SEARCH_TOOL_NAME = "x_search"
 POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
 LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
 TOOL_NAME = X_SEARCH_TOOL_NAME
-SERVER_NAME = "grok-mcp-gateway-x-search"
 SERVER_VERSION = "0.1.0"
 DEFAULT_MODEL = os.getenv("GROK_PROXY_MCP_MODEL", "grok-4.3").strip() or "grok-4.3"
-XAI_RESPONSES_URL = f"{token_manager.XAI_API_BASE}/v1/responses"
+TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
 _x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
 _x_search_counts: defaultdict[str, int] = defaultdict(int)
 _x_search_total_duration: float = 0.0
@@ -36,16 +31,11 @@ _build_posts_search_arguments = mcp_posts.build_posts_search_arguments
 _build_latest_posts_search_arguments = mcp_posts.build_latest_posts_search_arguments
 
 
-def _result(request_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
-
-
-def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-
-
-def _tool_enabled(tool_name: str) -> bool:
+def tool_enabled(tool_name: str) -> bool:
     return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
+
+
+_tool_enabled = tool_enabled
 
 
 def _x_search_tool_definition() -> Dict[str, Any]:
@@ -66,12 +56,14 @@ def _x_search_tool_definition() -> Dict[str, Any]:
                 },
                 "allowed_x_handles": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "maxItems": 10,
+                    "items": {"type": "string", "pattern": "^@?[A-Za-z0-9_]{1,15}$"},
                     "description": "Optional handle allowlist, for example ['elonmusk', 'xai'].",
                 },
                 "excluded_x_handles": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "maxItems": 10,
+                    "items": {"type": "string", "pattern": "^@?[A-Za-z0-9_]{1,15}$"},
                     "description": "Optional handle blocklist. Cannot be used with allowed_x_handles.",
                 },
                 "from_date": {
@@ -96,17 +88,22 @@ def _x_search_tool_definition() -> Dict[str, Any]:
     }
 
 
-def _tool_definitions() -> list[Dict[str, Any]]:
+def tool_definitions() -> list[Dict[str, Any]]:
     definitions = [
         _x_search_tool_definition(),
         mcp_posts.posts_tool_definition(DEFAULT_MODEL),
         mcp_posts.latest_posts_tool_definition(DEFAULT_MODEL),
     ]
-    return [definition for definition in definitions if _tool_enabled(str(definition["name"]))]
+    return [definition for definition in definitions if tool_enabled(str(definition["name"]))]
+
+
+_tool_definitions = tool_definitions
 
 
 _clean_handle_list = mcp_posts.clean_handle_list
 _clean_iso8601_date = mcp_posts.clean_iso8601_date
+_validate_date_order = mcp_posts.validate_date_order
+
 
 def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     tool: Dict[str, Any] = {"type": TOOL_NAME}
@@ -122,6 +119,7 @@ def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     from_date = _clean_iso8601_date(arguments, "from_date")
     to_date = _clean_iso8601_date(arguments, "to_date", inclusive_end=True)
+    _validate_date_order(from_date, to_date)
     if from_date:
         tool["from_date"] = from_date
     if to_date:
@@ -136,26 +134,11 @@ def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _extract_output_text(response: Dict[str, Any]) -> str:
-    direct = response.get("output_text")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-
-    chunks: list[str] = []
-    for item in response.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content") or []:
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
-                chunks.append(content["text"])
-    return "\n".join(chunk.strip() for chunk in chunks if chunk.strip())
+    return xai_responses._extract_output_text(response)
 
 
 def _compact_response(response: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        key: response.get(key)
-        for key in ("id", "model", "status", "usage", "output")
-        if response.get(key) is not None
-    }
+    return xai_responses._compact_response(response)
 
 
 def _record_x_search(status: str, duration: float) -> None:
@@ -191,38 +174,31 @@ def metrics_lines() -> list[str]:
     return lines
 
 
-async def _call_x_search(arguments: Dict[str, Any]) -> str:
+def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
     query = str(arguments.get("query") or "").strip()
     if not query:
         raise ValueError("query is required")
 
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    payload = {
+    return {
         "model": model,
         "input": query,
         "tools": [_build_x_search_tool(arguments)],
         "temperature": 0,
     }
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        **await token_manager.get_auth_headers(),
-    }
 
+
+async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
     async with _x_search_semaphore:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-            response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
+        return await xai_responses.post(_x_search_payload(arguments))
 
-    if response.status_code >= 400:
-        detail = response.text.strip().replace("\n", " ")[:500]
-        raise RuntimeError(f"xAI x_search request failed ({response.status_code}): {detail}")
 
-    data = response.json()
+async def _call_x_search(arguments: Dict[str, Any]) -> str:
+    result = await _call_x_search_result(arguments)
     if arguments.get("raw") is True:
-        return json.dumps(_compact_response(data), ensure_ascii=False, separators=(",", ":"))
+        return result.raw_json()
 
-    text = _extract_output_text(data)
-    return text or json.dumps(_compact_response(data), ensure_ascii=False, separators=(",", ":"))
+    return result.text or result.raw_json()
 
 
 async def _call_posts_result(arguments: Dict[str, Any], *, tool_name: str) -> Dict[str, Any]:
@@ -230,78 +206,40 @@ async def _call_posts_result(arguments: Dict[str, Any], *, tool_name: str) -> Di
         search_arguments, metadata = _build_latest_posts_search_arguments(arguments)
     else:
         search_arguments, metadata = _build_posts_search_arguments(arguments)
-    text = await _call_x_search(search_arguments)
-    return mcp_posts.posts_result(tool_name, text, metadata)
+    result = await _call_x_search_result(search_arguments)
+    text = result.text or result.raw_json()
+    return mcp_posts.posts_result(tool_name, text, metadata, sources=result.citations)
+
+
+async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    start = time.monotonic()
+    global _x_search_active
+    _x_search_active += 1
+    try:
+        if tool_name in {POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
+            result = await _call_posts_result(arguments, tool_name=tool_name)
+        else:
+            text = await _call_x_search(arguments)
+            result = {"content": [{"type": "text", "text": text}], "isError": False}
+        _record_x_search("success", time.monotonic() - start)
+        return result
+    except Exception:
+        _record_x_search("error", time.monotonic() - start)
+        raise
+    finally:
+        _x_search_active -= 1
 
 
 async def _handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    request_id = request.get("id")
-    method = request.get("method")
+    import mcp_server
 
-    if method == "initialize":
-        return _result(
-            request_id,
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
-            },
-        )
-    if method == "notifications/initialized":
-        return None
-    if method == "ping":
-        return _result(request_id, {})
-    if method == "tools/list":
-        return _result(request_id, {"tools": _tool_definitions()})
-    if method == "tools/call":
-        params = request.get("params") or {}
-        tool_name = params.get("name")
-        if tool_name not in {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
-            return _error(request_id, -32602, "unknown tool")
-        if not _tool_enabled(str(tool_name)):
-            return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {tool_name}")
-        start = time.monotonic()
-        global _x_search_active
-        _x_search_active += 1
-        try:
-            arguments = params.get("arguments") or {}
-            if tool_name in {POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
-                result = await _call_posts_result(arguments, tool_name=str(tool_name))
-                _record_x_search("success", time.monotonic() - start)
-                return _result(request_id, result)
-            else:
-                text = await _call_x_search(arguments)
-            _record_x_search("success", time.monotonic() - start)
-            return _result(request_id, {"content": [{"type": "text", "text": text}], "isError": False})
-        except Exception as exc:
-            _record_x_search("error", time.monotonic() - start)
-            return _result(
-                request_id,
-                {"content": [{"type": "text", "text": f"x_search failed: {exc}"}], "isError": True},
-            )
-        finally:
-            _x_search_active -= 1
-
-    return _error(request_id, -32601, f"method not found: {method}")
+    return await mcp_server.handle(request)
 
 
 async def _main() -> None:
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-            if not isinstance(request, dict):
-                raise ValueError("request must be an object")
-            response = await _handle(request)
-        except json.JSONDecodeError:
-            response = _error(None, -32700, "parse error")
-        except Exception as exc:
-            response = _error(None, -32603, str(exc))
-        if response is not None:
-            sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
-            sys.stdout.flush()
+    import mcp_server
+
+    await mcp_server.stdio_main()
 
 
 if __name__ == "__main__":

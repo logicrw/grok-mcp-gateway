@@ -12,6 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 EXPORT_SCRIPT = REPO_ROOT / "scripts" / "export_xai_oauth.py"
 IMPORT_SCRIPT = REPO_ROOT / "scripts" / "import_xai_oauth.py"
 REFRESH_REMOTE_SCRIPT = REPO_ROOT / "scripts" / "refresh_remote_xai_oauth.py"
+SERVICE_TEMPLATE = REPO_ROOT / "services" / "grok-mcp-gateway.service"
+SERVICE_EXAMPLES = REPO_ROOT / "services" / "service-examples.md"
 
 
 def test_export_outputs_importable_json_on_stdout_and_warning_on_stderr(tmp_path):
@@ -182,3 +184,17 @@ def test_refresh_remote_documents_split_chain_reauth_flag():
 
     assert "--print-reauth-command" in result.stdout
     assert "separate local xAI OAuth token chain" in result.stdout
+
+
+def test_service_templates_include_required_environment():
+    service = SERVICE_TEMPLATE.read_text(encoding="utf-8")
+    examples = SERVICE_EXAMPLES.read_text(encoding="utf-8")
+
+    assert "Environment=HOME=__SERVICE_HOME__" in service
+    assert "Environment=HERMES_AUTH_PATH=__SERVICE_HERMES_AUTH_PATH__" in service
+    assert "Environment=PATH=__SERVICE_PATH__" in service
+    assert "Environment=PROXY_HOST=127.0.0.1" in service
+    assert "Environment=PROXY_PORT=9996" in service
+    assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST=x_search,x_posts,x_latest_posts" in service
+    assert "<key>EnvironmentVariables</key>" in examples
+    assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST" in examples

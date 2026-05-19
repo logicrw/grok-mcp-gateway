@@ -13,7 +13,6 @@ import ipaddress
 import json
 import logging
 import socket
-import sys
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -24,8 +23,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
 import config
+import mcp_server
 import mcp_x_search
 import token_manager
+import xai_responses
 
 logger = logging.getLogger(__name__)
 
@@ -243,16 +244,21 @@ async def _iter_auto_x_search_compatible_sse(upstream: httpx.Response) -> AsyncG
         await upstream.aclose()
 
 
+async def _preflight_startup() -> None:
+    """Validate bind/auth settings and make sure OAuth state can be loaded."""
+    _validate_startup_security(config.HOST, config.PROXY_API_KEY)
+    await token_manager.read_local_state()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global httpx_client
     try:
-        _validate_startup_security(config.HOST, config.PROXY_API_KEY)
-        await token_manager.read_local_state()
+        await _preflight_startup()
         logger.info("Token state ready.")
     except Exception as exc:
         logger.error("Failed to initialize token state: %s", exc.__class__.__name__)
-        sys.exit(1)
+        raise
 
     httpx_client = httpx.AsyncClient(
         timeout=httpx.Timeout(300.0, connect=10.0),
@@ -271,6 +277,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await asyncio.gather(*_bg_tasks, return_exceptions=True)
     _bg_tasks.clear()
     await httpx_client.aclose()
+    await xai_responses.aclose_client()
 
 
 app = FastAPI(title="Grok MCP Gateway", lifespan=lifespan)
@@ -484,6 +491,10 @@ async def health(response: Response, deep: bool = False) -> dict:
             "token_expires_at": exp_str,
             "token_endpoint": state.get("token_endpoint"),
         }
+        if exp and exp <= time.time():
+            response.status_code = 503
+            result["status"] = "error"
+            result["detail"] = "token expired; refresh or re-authenticate xAI OAuth"
         if deep:
             t0 = time.time()
             try:
@@ -565,7 +576,7 @@ async def mcp(request: Request) -> Response:
 
     responses: list[dict] = []
     for item in requests:
-        response = await mcp_x_search._handle(item)
+        response = await mcp_server.handle(item)
         if response:
             responses.append(response)
     if not responses:
@@ -623,6 +634,11 @@ def find_port(start: int = config.PORT, max_scan: int = 20) -> int:
                 return port
             except OSError:
                 continue
+    if max_scan <= 1:
+        raise RuntimeError(
+            f"Port {start} is already in use. Set PROXY_PORT to a free port or enable "
+            "GROK_GATEWAY_PORT_AUTOSCAN=1 for development."
+        )
     raise RuntimeError(f"No available port found in range {start}~{start + max_scan - 1}")
 
 
@@ -634,8 +650,13 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    _validate_startup_security(config.HOST, config.PROXY_API_KEY)
-    port = find_port(config.PORT)
+    try:
+        asyncio.run(_preflight_startup())
+    except Exception as exc:
+        logger.error("Startup preflight failed: %s", exc.__class__.__name__)
+        raise SystemExit(1) from exc
+
+    port = find_port(config.PORT, max_scan=20 if config.GROK_GATEWAY_PORT_AUTOSCAN else 1)
     logger.info("Starting Grok MCP Gateway on http://%s:%d", config.HOST, port)
     uvicorn.run(app, host=config.HOST, port=port, log_level="info", access_log=False)
 

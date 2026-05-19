@@ -2,9 +2,12 @@ import asyncio
 import sys
 from pathlib import Path
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import mcp_x_search
+import xai_responses
 
 
 def test_build_x_search_tool_keeps_only_requested_options():
@@ -65,6 +68,24 @@ def test_build_x_search_tool_rejects_invalid_dates():
         mcp_x_search._build_x_search_tool({"from_date": "today"})
     except ValueError as exc:
         assert "ISO8601" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_build_x_search_tool_rejects_reversed_dates():
+    try:
+        mcp_x_search._build_x_search_tool({"from_date": "2026-05-20", "to_date": "2026-05-18"})
+    except ValueError as exc:
+        assert "from_date" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_build_x_search_tool_rejects_invalid_handles():
+    try:
+        mcp_x_search._build_x_search_tool({"allowed_x_handles": ["xai/evil"]})
+    except ValueError as exc:
+        assert "X handles" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
@@ -134,17 +155,17 @@ def test_build_posts_search_arguments_supports_flexible_filters():
             "query": "Hermes Agent",
             "time_range": "上个月",
             "count": 7,
-            "sort": "popular",
+            "sort": "relevance",
             "include_replies": False,
             "include_reposts": False,
-            "engagement_filter": {"min_views": 10000000},
+            "best_effort_filters": {"min_views": 10000000},
         }
     )
 
     assert arguments["allowed_x_handles"] == ["0xlogicrw", "xai"]
     assert metadata["count"] == 7
-    assert metadata["sort"] == "popular"
-    assert metadata["engagement_filter"] == {"min_views": 10000000}
+    assert metadata["sort"] == "relevance"
+    assert metadata["best_effort_filters"] == {"min_views": 10000000}
     assert "Hermes Agent" in arguments["query"]
     assert "views >= 10000000" in arguments["query"]
     assert "Exclude replies" in arguments["query"]
@@ -186,9 +207,16 @@ def test_tools_list_returns_search_posts_and_latest_posts_tools():
     assert "to_date" in tools["x_search"]["inputSchema"]["properties"]
     assert "excluded_x_handles" in tools["x_search"]["inputSchema"]["properties"]
     assert "time_range" in tools["x_posts"]["inputSchema"]["properties"]
-    assert "engagement_filter" in tools["x_posts"]["inputSchema"]["properties"]
+    assert "best_effort_filters" in tools["x_posts"]["inputSchema"]["properties"]
+    assert tools["x_posts"]["outputSchema"]["properties"]["timeline_verified"]["const"] is False
     assert tools["x_latest_posts"]["inputSchema"]["required"] == ["handle"]
     assert "count" in tools["x_latest_posts"]["inputSchema"]["properties"]
+
+
+def test_initialize_uses_structured_content_protocol_version():
+    response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+
+    assert response["result"]["protocolVersion"] == "2025-06-18"
 
 
 def test_tools_list_respects_allowlist(monkeypatch):
@@ -241,15 +269,74 @@ def test_tools_call_wraps_search_result(monkeypatch):
     assert mcp_x_search._x_search_total_count == before + 1
 
 
+def test_tools_call_sanitizes_upstream_error(monkeypatch):
+    async def fake_call(arguments):
+        raise RuntimeError(
+            "xAI Responses request failed with upstream status 500: refresh_token=super-secret Authorization: Bearer abc"
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "x_search", "arguments": {"query": "latest @xai posts"}},
+            }
+        )
+    )
+
+    text = response["result"]["content"][0]["text"]
+    assert response["result"]["isError"] is True
+    assert "super-secret" not in text
+    assert "Bearer abc" not in text
+
+
+def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
+    async def fake_auth_headers():
+        return {"Authorization": "Bearer local-token"}
+
+    def handler(request):
+        return httpx.Response(
+            500,
+            request=request,
+            text="refresh_token=super-secret Authorization: Bearer upstream-secret user@example.com",
+        )
+
+    async def run():
+        monkeypatch.setattr(xai_responses.token_manager, "get_auth_headers", fake_auth_headers)
+        xai_responses._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        xai_responses._client_loop = asyncio.get_running_loop()
+        try:
+            try:
+                await xai_responses.post({"model": "grok-4.3", "input": "hi", "tools": [{"type": "x_search"}]})
+            except RuntimeError as exc:
+                message = str(exc)
+            else:
+                raise AssertionError("expected RuntimeError")
+        finally:
+            await xai_responses.aclose_client()
+        return message
+
+    message = asyncio.run(run())
+
+    assert "500" in message
+    assert "super-secret" not in message
+    assert "upstream-secret" not in message
+    assert "user@example.com" not in message
+
+
 def test_tools_call_wraps_latest_posts_result(monkeypatch):
     before = mcp_x_search._x_search_total_count
     seen = {}
 
     async def fake_call(arguments):
         seen.update(arguments)
-        return '{"posts":[]}'
+        return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -275,6 +362,7 @@ def test_tools_call_wraps_latest_posts_result(monkeypatch):
     assert seen["allowed_x_handles"] == ["0xlogicrw"]
     assert "Return up to 3 posts" in seen["query"]
     assert response["result"]["structuredContent"]["posts"] == []
+    assert response["result"]["structuredContent"]["alias_of"] == "x_posts"
     assert mcp_x_search._x_search_total_count == before + 1
 
 
@@ -284,9 +372,9 @@ def test_tools_call_wraps_posts_result(monkeypatch):
 
     async def fake_call(arguments):
         seen.update(arguments)
-        return '{"posts":[{"text":"hello"}]}'
+        return xai_responses.ResponsesResult('{"posts":[{"text":"hello"}]}', {}, [], None, "grok-4.3")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -307,6 +395,7 @@ def test_tools_call_wraps_posts_result(monkeypatch):
     assert seen["allowed_x_handles"] == ["0xlogicrw"]
     assert "Hermes" in seen["query"]
     assert response["result"]["structuredContent"]["posts"][0]["text"] == "hello"
+    assert response["result"]["structuredContent"]["schema_version"] == "x_posts.v1"
     assert mcp_x_search._x_search_total_count == before + 1
 
 

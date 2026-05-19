@@ -19,6 +19,9 @@ WorkingDirectory=__SERVICE_WORKDIR__
 Environment=HOME=__SERVICE_HOME__
 Environment=HERMES_AUTH_PATH=__SERVICE_HERMES_AUTH_PATH__
 Environment=PATH=__SERVICE_PATH__
+Environment=PROXY_HOST=127.0.0.1
+Environment=PROXY_PORT=9996
+Environment=GROK_GATEWAY_MCP_TOOL_ALLOWLIST=x_search,x_posts,x_latest_posts
 ExecStart=__SERVICE_PYTHON_BIN__ main.py
 Restart=always
 RestartSec=5

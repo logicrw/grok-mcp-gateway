@@ -36,6 +36,21 @@ Create `~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist` and adjust pat
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/YOUR_USERNAME/grok-mcp-gateway</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/YOUR_USERNAME</string>
+        <key>HERMES_AUTH_PATH</key>
+        <string>/Users/YOUR_USERNAME/.hermes/auth.json</string>
+        <key>PATH</key>
+        <string>/Users/YOUR_USERNAME/grok-mcp-gateway/.venv/bin:/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PROXY_HOST</key>
+        <string>127.0.0.1</string>
+        <key>PROXY_PORT</key>
+        <string>9996</string>
+        <key>GROK_GATEWAY_MCP_TOOL_ALLOWLIST</key>
+        <string>x_search,x_posts,x_latest_posts</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -51,5 +66,9 @@ Create `~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist` and adjust pat
 Then load it with:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl kickstart -k gui/$(id -u)/io.logicrw.grok-mcp-gateway
 ```
+
+After editing the plist, restart it with `launchctl bootout` followed by
+`launchctl bootstrap`, or use `kickstart -k` if the label is already loaded.

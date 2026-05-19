@@ -3,6 +3,7 @@ import base64
 import importlib
 import json
 import os
+import socket
 import stat
 import sys
 from pathlib import Path
@@ -87,6 +88,17 @@ def test_proxy_api_key_accepts_bearer_or_x_proxy_header():
     assert main._request_has_valid_proxy_api_key({"x-proxy-api-key": "secret"}, "secret")
     assert not main._request_has_valid_proxy_api_key({"authorization": "Bearer wrong"}, "secret")
     assert not main._request_has_valid_proxy_api_key({}, "secret")
+
+
+def test_find_port_fails_fast_when_autoscan_disabled():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((main.config.HOST, 0))
+        occupied_port = sock.getsockname()[1]
+
+        with pytest.raises(RuntimeError, match="already in use"):
+            main.find_port(occupied_port, max_scan=1)
+
+        assert main.find_port(occupied_port, max_scan=10) != occupied_port
 
 
 def test_upstream_retry_attempts_are_at_least_one(monkeypatch):
@@ -205,11 +217,42 @@ def test_missing_hermes_auth_file_stops_startup(tmp_path, monkeypatch):
         asyncio.run(token_manager.init_local_state())
 
 
-def test_missing_hermes_cli_stops_startup(monkeypatch):
+def test_missing_hermes_cli_and_missing_auth_stops_startup(tmp_path, monkeypatch):
     monkeypatch.setattr(token_manager.shutil, "which", lambda command: None)
+    monkeypatch.setattr(token_manager, "HERMES_AUTH_PATH", tmp_path / "missing-auth.json")
 
-    with pytest.raises(RuntimeError, match="Hermes Agent CLI not found"):
+    with pytest.raises(RuntimeError, match="Hermes auth.json not found"):
         asyncio.run(token_manager.init_local_state())
+
+
+def test_imported_hermes_auth_bootstraps_without_hermes_cli(tmp_path, monkeypatch):
+    auth_path = tmp_path / ".hermes" / "auth.json"
+    auth_path.parent.mkdir()
+    auth_path.write_text(
+        json.dumps({
+            "providers": {
+                "xai-oauth": {
+                    "tokens": {
+                        "access_token": _unsigned_jwt({"client_id": "client-from-access"}),
+                        "refresh_token": "refresh",
+                    },
+                    "discovery": {"token_endpoint": "https://auth.x.ai/oauth2/token"},
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    local_state = tmp_path / "state" / "auth_state.json"
+
+    monkeypatch.setattr(token_manager.shutil, "which", lambda command: None)
+    monkeypatch.setattr(token_manager, "HERMES_AUTH_PATH", auth_path)
+    monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", local_state)
+
+    state = asyncio.run(token_manager.init_local_state())
+
+    assert state["client_id"] == "client-from-access"
+    assert state["refresh_token"] == "refresh"
+    assert local_state.exists()
 
 
 def test_token_state_save_uses_private_permissions(tmp_path):
@@ -302,6 +345,23 @@ def test_health_and_metrics_require_proxy_auth_when_configured(monkeypatch):
         assert client.get("/metrics", headers={"X-Proxy-Api-Key": "secret"}).status_code == 200
 
 
+def test_health_reports_expired_token_state(monkeypatch):
+    expired = _unsigned_jwt({"exp": 1})
+
+    async def fake_read_local_state():
+        return {"access_token": expired, "token_endpoint": "https://auth.x.ai/oauth2/token"}
+
+    monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+
+    with TestClient(main.app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "error"
+    assert "token expired" in response.json()["detail"]
+
+
 def test_http_mcp_lists_x_search_tool():
     with TestClient(main.app) as client:
         response = client.post(
@@ -374,6 +434,31 @@ def test_refresh_without_client_id_stops(monkeypatch):
             "refresh_token": "old-refresh",
             "token_endpoint": "https://auth.x.ai/oauth2/token",
         }))
+
+
+def test_refresh_failure_does_not_return_upstream_secret(monkeypatch):
+    def fake_post(url, headers, data, timeout):
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            400,
+            request=request,
+            text="refresh_token=super-secret Authorization: Bearer upstream-secret user@example.com",
+        )
+
+    monkeypatch.setattr(token_manager.httpx, "post", fake_post)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(token_manager.refresh_access_token({
+            "refresh_token": "old-refresh",
+            "client_id": "client-from-hermes",
+            "token_endpoint": "https://auth.x.ai/oauth2/token",
+        }))
+
+    message = str(exc_info.value)
+    assert "400" in message
+    assert "super-secret" not in message
+    assert "upstream-secret" not in message
+    assert "user@example.com" not in message
 
 
 def test_streaming_proxy_refreshes_and_retries_once_on_401(monkeypatch):

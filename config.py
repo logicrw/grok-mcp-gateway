@@ -51,6 +51,7 @@ def _env_csv(name: str, default: Optional[list[str]] = None) -> list[str]:
 
 HOST: str = os.getenv("PROXY_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT: int = _env_int("PROXY_PORT", 9996, minimum=1)
+GROK_GATEWAY_PORT_AUTOSCAN: bool = _env_bool("GROK_GATEWAY_PORT_AUTOSCAN", False)
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 HERMES_AUTH_PATH: Path = Path(
     os.getenv("HERMES_AUTH_PATH", str(Path.home() / ".hermes" / "auth.json"))
@@ -84,3 +85,4 @@ GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
     item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_search", "x_posts", "x_latest_posts"])
 ]
 GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)
+GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS: bool = _env_bool("GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS", False)
