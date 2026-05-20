@@ -85,7 +85,7 @@ def _x_search_tool_definition() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "Optional inclusive ISO8601 search end date, for example '2026-05-18'. "
-                        "Date-only values are normalized by the proxy for xAI's current date-bound behavior."
+                        "Date-only values are passed through unchanged."
                     ),
                 },
                 "enable_image_understanding": {"type": "boolean"},
@@ -189,7 +189,10 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
     unknown = set(arguments) - X_SEARCH_ARGUMENT_KEYS
     if unknown:
         raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
-    query = str(arguments.get("query") or "").strip()
+    query_value = arguments.get("query")
+    if not isinstance(query_value, str):
+        raise ValueError("query must be a string")
+    query = query_value.strip()
     if not query:
         raise ValueError("query is required")
     if len(query) > 2000:

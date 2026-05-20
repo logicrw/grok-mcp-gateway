@@ -589,7 +589,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `PROXY_HOST` | `127.0.0.1` | 绑定地址。非 loopback 必须设置 `PROXY_API_KEY`。 |
 | `PROXY_PORT` | `9996` | 默认固定监听端口。被占用时启动失败，除非设置 `GROK_GATEWAY_PORT_AUTOSCAN=1`。 |
 | `GROK_GATEWAY_PORT_AUTOSCAN` | `false` | 仅建议开发时使用的端口扫描 fallback。常驻客户端固定配置 `9996` 时应保持关闭。 |
-| `PROXY_API_KEY` | 未设置 | 可选本地 proxy auth key。非 loopback 必须设置。支持 `Authorization: Bearer <key>` 或 `X-Proxy-Api-Key: <key>`。 |
+| `PROXY_API_KEY` | 未设置 | 可选本地 proxy auth key。非 loopback 必须设置，且至少 16 字符；建议使用 32+ 随机字符。支持 `Authorization: Bearer <key>` 或 `X-Proxy-Api-Key: <key>`。 |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | proxy 自己的 OAuth token state。 |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth 文件。 |
 | `LOG_LEVEL` | `INFO` | Python app 日志级别。 |

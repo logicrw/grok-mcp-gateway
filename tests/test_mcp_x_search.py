@@ -206,6 +206,13 @@ def test_x_search_payload_rejects_unknown_keys_and_long_query():
         raise AssertionError("expected ValueError")
 
     try:
+        mcp_x_search._x_search_payload({"query": ["xai"]})
+    except ValueError as exc:
+        assert "query must be a string" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
         mcp_x_search._x_search_payload({"query": "x" * 2001})
     except ValueError as exc:
         assert "at most 2000" in str(exc)
@@ -238,6 +245,9 @@ def test_tools_list_returns_search_posts_and_latest_posts_tools():
     assert tools["x_search"]["inputSchema"]["required"] == ["query"]
     assert "from_date" in tools["x_search"]["inputSchema"]["properties"]
     assert "to_date" in tools["x_search"]["inputSchema"]["properties"]
+    to_date_description = tools["x_search"]["inputSchema"]["properties"]["to_date"]["description"]
+    assert "passed through unchanged" in to_date_description
+    assert "normalized by the proxy" not in to_date_description
     assert "excluded_x_handles" in tools["x_search"]["inputSchema"]["properties"]
     assert "time_range" in tools["x_posts"]["inputSchema"]["properties"]
     assert "best_effort_filters" in tools["x_posts"]["inputSchema"]["properties"]

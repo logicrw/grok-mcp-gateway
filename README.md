@@ -608,7 +608,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `PROXY_HOST` | `127.0.0.1` | Bind address. Non-loopback binds require `PROXY_API_KEY`. |
 | `PROXY_PORT` | `9996` | Fixed listen port by default. If occupied, startup fails unless `GROK_GATEWAY_PORT_AUTOSCAN=1` is set. |
 | `GROK_GATEWAY_PORT_AUTOSCAN` | `false` | Development-only port scan fallback. Keep disabled for resident client configs pinned to `9996`. |
-| `PROXY_API_KEY` | unset | Optional local proxy auth key. Required when binding outside loopback. Accepted as `Authorization: Bearer <key>` or `X-Proxy-Api-Key: <key>`. |
+| `PROXY_API_KEY` | unset | Optional local proxy auth key. Required when binding outside loopback. Non-loopback keys must be at least 16 characters; 32+ random characters are recommended. Accepted as `Authorization: Bearer <key>` or `X-Proxy-Api-Key: <key>`. |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | Proxy-owned OAuth token state. |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth store. |
 | `LOG_LEVEL` | `INFO` | Python app log level. |
