@@ -251,7 +251,11 @@ async def _iter_auto_x_search_compatible_sse(upstream: httpx.Response) -> AsyncG
 async def _preflight_startup() -> None:
     """Validate bind/auth settings and make sure OAuth state can be loaded."""
     _validate_startup_security(config.HOST, config.PROXY_API_KEY)
-    await token_manager.read_local_state()
+    try:
+        await token_manager.read_local_state()
+    except Exception:
+        if not await token_manager.get_api_key_fallback():
+            raise
 
 
 @asynccontextmanager
@@ -300,8 +304,11 @@ async def _token_watcher() -> None:
             if exp:
                 remaining = exp - time.time()
                 if remaining < config.TOKEN_REFRESH_WINDOW:
-                    logger.info("Token expiring in %.0fs, pre-refreshing...", remaining)
-                    await token_manager.get_access_token(force_refresh=True)
+                    if await token_manager.get_api_key_fallback():
+                        logger.info("OAuth token expiring in %.0fs; XAI_API_KEY fallback is configured.", remaining)
+                    else:
+                        logger.info("Token expiring in %.0fs, pre-refreshing...", remaining)
+                        await token_manager.get_access_token(force_refresh=True)
                 else:
                     logger.debug("Token healthy (expires in %.0fs)", remaining)
         except asyncio.CancelledError:
@@ -485,6 +492,7 @@ async def health(response: Response, deep: bool = False) -> dict:
         state = await token_manager.read_local_state()
         access_token = state.get("access_token", "")
         exp = token_manager.get_token_expiry(access_token)
+        api_key_fallback = bool(await token_manager.get_api_key_fallback())
         exp_str = None
         if exp:
             exp_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp))
@@ -496,9 +504,13 @@ async def health(response: Response, deep: bool = False) -> dict:
             "token_endpoint": state.get("token_endpoint"),
         }
         if exp and exp <= time.time():
-            response.status_code = 503
-            result["status"] = "error"
-            result["detail"] = "token expired; refresh or re-authenticate xAI OAuth"
+            if api_key_fallback:
+                result["provider"] = "xai-api-key-fallback"
+                result["detail"] = "oauth token expired; using XAI_API_KEY fallback"
+            else:
+                response.status_code = 503
+                result["status"] = "error"
+                result["detail"] = "token expired; refresh or re-authenticate xAI OAuth"
         if deep:
             t0 = time.time()
             try:

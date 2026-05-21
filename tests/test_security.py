@@ -132,6 +132,42 @@ def test_find_port_fails_fast_when_autoscan_disabled():
         assert main.find_port(occupied_port, max_scan=10) != occupied_port
 
 
+def test_preflight_accepts_api_key_fallback_when_oauth_state_unavailable(monkeypatch):
+    async def fake_read_local_state():
+        raise RuntimeError("missing oauth state")
+
+    async def fake_get_api_key_fallback():
+        return "xai-test-key"
+
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+    monkeypatch.setattr(main.token_manager, "get_api_key_fallback", fake_get_api_key_fallback)
+
+    asyncio.run(main._preflight_startup())
+
+
+def test_health_reports_api_key_fallback_when_oauth_token_expired(monkeypatch):
+    async def fake_read_local_state():
+        return {
+            "access_token": _unsigned_jwt({"exp": 1}),
+            "token_endpoint": "https://auth.x.ai/oauth2/token",
+        }
+
+    async def fake_get_api_key_fallback():
+        return "xai-test-key"
+
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+    monkeypatch.setattr(main.token_manager, "get_api_key_fallback", fake_get_api_key_fallback)
+
+    with TestClient(main.app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["provider"] == "xai-api-key-fallback"
+    assert payload["detail"] == "oauth token expired; using XAI_API_KEY fallback"
+
+
 def test_upstream_retry_attempts_are_at_least_one(monkeypatch):
     monkeypatch.setenv("UPSTREAM_RETRY_ATTEMPTS", "0")
     reloaded = importlib.reload(config)
@@ -382,8 +418,12 @@ def test_health_reports_expired_token_state(monkeypatch):
     async def fake_read_local_state():
         return {"access_token": expired, "token_endpoint": "https://auth.x.ai/oauth2/token"}
 
+    async def fake_get_api_key_fallback():
+        return ""
+
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+    monkeypatch.setattr(main.token_manager, "get_api_key_fallback", fake_get_api_key_fallback)
 
     with TestClient(main.app) as client:
         response = client.get("/health")
@@ -475,6 +515,19 @@ def test_refresh_without_client_id_stops(monkeypatch):
             "refresh_token": "old-refresh",
             "token_endpoint": "https://auth.x.ai/oauth2/token",
         }))
+
+
+def test_auth_headers_fall_back_to_xai_api_key_when_oauth_unavailable(monkeypatch):
+    async def fake_get_access_token():
+        raise RuntimeError("OAuth refresh failed")
+
+    monkeypatch.setattr(token_manager.config, "XAI_API_KEY", "xai-test-key", raising=False)
+    monkeypatch.setattr(token_manager.config, "XAI_API_KEY_FILE", None, raising=False)
+    monkeypatch.setattr(token_manager, "get_access_token", fake_get_access_token)
+
+    headers = asyncio.run(token_manager.get_auth_headers())
+
+    assert headers == {"Authorization": "Bearer xai-test-key"}
 
 
 def test_refresh_failure_does_not_return_upstream_secret(monkeypatch):

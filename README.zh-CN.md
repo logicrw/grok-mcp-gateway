@@ -592,6 +592,8 @@ sudo systemctl enable --now grok-mcp-gateway
 | `PROXY_API_KEY` | 未设置 | 可选本地 proxy auth key。非 loopback 必须设置，且至少 16 字符；建议使用 32+ 随机字符。支持 `Authorization: Bearer <key>` 或 `X-Proxy-Api-Key: <key>`。 |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | proxy 自己的 OAuth token state。 |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth 文件。 |
+| `XAI_API_KEY` | 未设置 | Hermes OAuth token 解析失败时使用的可选 xAI API key fallback。 |
+| `XAI_API_KEY_FILE` | 未设置 | 可选路径，指向保存 xAI API key fallback 的私有文件。LaunchAgent/systemd 服务建议用它，避免把 secret 直接写进服务定义。 |
 | `LOG_LEVEL` | `INFO` | Python app 日志级别。 |
 | `TOKEN_REFRESH_WINDOW` | `300` | token 到期前多少秒触发后台刷新。 |
 | `HERMES_POLL_INTERVAL` | `60` | Hermes auth 文件轮询间隔。 |
