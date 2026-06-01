@@ -16,6 +16,7 @@ import shutil
 import stat
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, Dict, Optional
@@ -41,6 +42,46 @@ REFRESH_SKEW_SECONDS = 120
 
 # Prevent concurrent token refreshes from racing each other.
 _refresh_lock = asyncio.Lock()
+
+
+def _count_from_state(state: Dict[str, Any], key: str) -> int:
+    value = state.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def get_refresh_diagnostics(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return sanitized OAuth refresh diagnostics safe for health/metrics."""
+    return {
+        "last_refresh_at": state.get("last_refresh_at") or state.get("last_refresh"),
+        "last_refresh_status": state.get("last_refresh_status"),
+        "last_refresh_error_class": state.get("last_refresh_error_class"),
+        "refresh_token_rotated": bool(state.get("refresh_token_rotated")),
+        "refresh_success_count": _count_from_state(state, "refresh_success_count"),
+        "refresh_failure_count": _count_from_state(state, "refresh_failure_count"),
+        "credential_source": state.get("credential_source") or "hermes_xai_oauth",
+        "reauth_required": bool(state.get("reauth_required")),
+    }
+
+
+def _should_accept_hermes_state(hermes_state: Dict[str, Any], previous_state: Dict[str, Any]) -> bool:
+    hermes_access = str(hermes_state.get("access_token") or "")
+    previous_access = str(previous_state.get("access_token") or "")
+    if not hermes_access:
+        return False
+    if not previous_access:
+        return True
+
+    hermes_exp = get_token_expiry(hermes_access) or 0
+    previous_exp = get_token_expiry(previous_access) or 0
+    now = time.time()
+    if previous_exp <= now and hermes_exp > now:
+        return True
+    if hermes_exp and previous_exp and hermes_exp <= previous_exp:
+        return False
+
+    same_access = hermes_state.get("access_token") == previous_state.get("access_token")
+    same_refresh = hermes_state.get("refresh_token") == previous_state.get("refresh_token")
+    return not (same_access and same_refresh)
 
 
 def _decode_jwt_payload(token: str) -> Dict[str, Any]:
@@ -84,6 +125,41 @@ def _extract_oauth_client_id(tokens: Dict[str, Any], explicit_client_id: str = "
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
     return ""
+
+
+def _coerce_timestamp(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    return 0.0
+
+
+def _select_hermes_pool_entry(pool_entries: list[Dict[str, Any]]) -> Dict[str, Any]:
+    usable = [
+        entry
+        for entry in pool_entries
+        if str(entry.get("last_status") or "").lower() not in {"disabled", "error", "exhausted", "failed"}
+    ]
+    candidates = usable or pool_entries
+
+    def score(entry: Dict[str, Any]) -> tuple[float, float, float]:
+        expiry = _decode_jwt_exp(str(entry.get("access_token") or "")) or 0.0
+        refreshed_at = _coerce_timestamp(entry.get("last_refresh") or entry.get("last_status_at"))
+        priority = entry.get("priority")
+        priority_score = float(priority) if isinstance(priority, (int, float)) else 0.0
+        return (expiry, refreshed_at, priority_score)
+
+    return max(candidates, key=score)
 
 
 def _is_expiring(access_token: str, skew_seconds: int = REFRESH_SKEW_SECONDS) -> bool:
@@ -225,14 +301,7 @@ async def load_from_hermes(auth_path: Optional[Path] = None) -> Optional[Dict[st
     pool_entries = (data.get("credential_pool") or {}).get("xai-oauth") or []
     if not pool_entries:
         return None
-    pool_entry = next(
-        (
-            entry
-            for entry in pool_entries
-            if str(entry.get("last_status") or "").lower() in {"", "ok"}
-        ),
-        pool_entries[0],
-    )
+    pool_entry = _select_hermes_pool_entry(pool_entries)
     client_id = _extract_oauth_client_id(pool_entry, str(pool_entry.get("client_id") or ""))
     return {
         "access_token": str(pool_entry.get("access_token") or "").strip(),
@@ -344,7 +413,22 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("No OAuth client_id available. Re-authenticate xAI Grok OAuth in Hermes.")
 
     logger.info("Refreshing xAI OAuth token...")
-    refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
+    try:
+        refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
+    except Exception as exc:
+        failed = dict(state)
+        failed["last_refresh_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        failed["last_refresh_status"] = "failure"
+        failed["last_refresh_error_class"] = exc.__class__.__name__
+        failed["refresh_failure_count"] = _count_from_state(state, "refresh_failure_count") + 1
+        failed["refresh_success_count"] = _count_from_state(state, "refresh_success_count")
+        failed["reauth_required"] = True
+        await _save_json(LOCAL_AUTH_PATH, failed)
+        rehydrated = await rehydrate_from_hermes(failed)
+        if rehydrated:
+            logger.info("Recovered xAI OAuth token state from Hermes after refresh failure.")
+            return rehydrated
+        raise
 
     updated = dict(state)
     updated["access_token"] = refreshed["access_token"]
@@ -353,9 +437,44 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
     updated["token_type"] = refreshed["token_type"]
     updated["expires_in"] = refreshed["expires_in"]
     updated["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    updated["last_refresh_at"] = updated["last_refresh"]
+    updated["last_refresh_status"] = "success"
+    updated["last_refresh_error_class"] = None
+    updated["refresh_token_rotated"] = refreshed["refresh_token"] != refresh_token
+    updated["refresh_success_count"] = _count_from_state(state, "refresh_success_count") + 1
+    updated["refresh_failure_count"] = _count_from_state(state, "refresh_failure_count")
+    updated["credential_source"] = "xai-oauth"
+    updated["reauth_required"] = False
     await _save_json(LOCAL_AUTH_PATH, updated)
     logger.info("Token refreshed successfully.")
     return updated
+
+
+async def rehydrate_from_hermes(previous_state: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Reload a newer Hermes xai-oauth credential into local state, if available."""
+    if previous_state is None:
+        previous_state = await _load_json(LOCAL_AUTH_PATH) or {}
+    hermes_state = await load_from_hermes()
+    if not hermes_state or not hermes_state.get("access_token") or not hermes_state.get("client_id"):
+        return None
+
+    if not _should_accept_hermes_state(hermes_state, previous_state):
+        return None
+
+    if _is_expiring(str(hermes_state.get("access_token") or ""), 0):
+        return None
+
+    rehydrated = dict(hermes_state)
+    rehydrated["last_refresh_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    rehydrated["last_refresh_status"] = "rehydrated_from_hermes"
+    rehydrated["last_refresh_error_class"] = None
+    rehydrated["refresh_token_rotated"] = hermes_state.get("refresh_token") != previous_state.get("refresh_token")
+    rehydrated["refresh_success_count"] = _count_from_state(previous_state, "refresh_success_count")
+    rehydrated["refresh_failure_count"] = _count_from_state(previous_state, "refresh_failure_count")
+    rehydrated["credential_source"] = "hermes_rehydrated"
+    rehydrated["reauth_required"] = False
+    await _save_json(LOCAL_AUTH_PATH, rehydrated)
+    return rehydrated
 
 
 async def get_access_token(*, force_refresh: bool = False) -> str:
@@ -412,14 +531,26 @@ def get_token_expiry(access_token: str) -> Optional[float]:
 
 async def get_auth_headers() -> Dict[str, str]:
     """Return headers ready for an xAI API call."""
+    context = await get_auth_context()
+    return context["headers"]
+
+
+async def get_auth_context(*, force_refresh: bool = False) -> Dict[str, Any]:
+    """Return xAI auth headers plus the credential source used."""
     try:
-        token = await get_access_token()
+        if force_refresh:
+            token = await get_access_token(force_refresh=True)
+        else:
+            token = await get_access_token()
+        credential_source = "xai-oauth"
     except Exception as exc:
         api_key = await get_api_key_fallback()
         if not api_key:
             raise
         logger.warning("OAuth token unavailable; using XAI_API_KEY fallback: %s", exc.__class__.__name__)
         token = api_key
+        credential_source = "xai-api-key-fallback"
     return {
-        "Authorization": f"Bearer {token}",
+        "headers": {"Authorization": f"Bearer {token}"},
+        "credential_source": credential_source,
     }

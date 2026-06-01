@@ -42,6 +42,37 @@ _build_posts_search_arguments = mcp_posts.build_posts_search_arguments
 _build_latest_posts_search_arguments = mcp_posts.build_latest_posts_search_arguments
 
 
+def _x_search_output_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "schema_version",
+            "tool",
+            "backend",
+            "answer",
+            "citations",
+            "inline_citations",
+            "degraded",
+            "credential_source",
+            "request",
+        ],
+        "additionalProperties": True,
+        "properties": {
+            "schema_version": {"const": "x_search.v1"},
+            "tool": {"const": X_SEARCH_TOOL_NAME},
+            "backend": {"const": "xai_x_search"},
+            "answer": {"type": "string"},
+            "citations": {"type": "array"},
+            "inline_citations": {"type": "array"},
+            "degraded": {"type": "boolean"},
+            "credential_source": {"type": "string"},
+            "model": {"type": "string"},
+            "usage": {},
+            "request": {"type": "object"},
+        },
+    }
+
+
 def tool_enabled(tool_name: str) -> bool:
     return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
 
@@ -96,6 +127,7 @@ def _x_search_tool_definition() -> Dict[str, Any]:
             "required": ["query"],
             "additionalProperties": False,
         },
+        "outputSchema": _x_search_output_schema(),
     }
 
 
@@ -220,6 +252,41 @@ async def _call_x_search(arguments: Dict[str, Any]) -> str:
     return result.text or result.raw_json()
 
 
+def _x_search_request_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "query": arguments.get("query"),
+        "allowed_x_handles": arguments.get("allowed_x_handles") or [],
+        "excluded_x_handles": arguments.get("excluded_x_handles") or [],
+        "from_date": arguments.get("from_date"),
+        "to_date": arguments.get("to_date"),
+        "enable_image_understanding": bool(arguments.get("enable_image_understanding", False)),
+        "enable_video_understanding": bool(arguments.get("enable_video_understanding", False)),
+        "model": arguments.get("model") or DEFAULT_MODEL,
+    }
+
+
+def _x_search_tool_result(result: xai_responses.ResponsesResult, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    answer = result.text or result.raw_json()
+    structured = {
+        "schema_version": "x_search.v1",
+        "tool": X_SEARCH_TOOL_NAME,
+        "backend": "xai_x_search",
+        "answer": answer,
+        "citations": result.citations,
+        "inline_citations": result.inline_citations,
+        "degraded": bool(result.degraded),
+        "credential_source": result.credential_source,
+        "model": result.model,
+        "usage": result.usage,
+        "request": _x_search_request_metadata(arguments),
+    }
+    return {
+        "content": [{"type": "text", "text": answer}],
+        "structuredContent": structured,
+        "isError": False,
+    }
+
+
 async def _call_posts_result(arguments: Dict[str, Any], *, tool_name: str) -> Dict[str, Any]:
     if tool_name == LATEST_POSTS_TOOL_NAME:
         search_arguments, metadata = _build_latest_posts_search_arguments(arguments)
@@ -238,8 +305,12 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
         if tool_name in {POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
             result = await _call_posts_result(arguments, tool_name=tool_name)
         else:
-            text = await _call_x_search(arguments)
-            result = {"content": [{"type": "text", "text": text}], "isError": False}
+            search_result = await _call_x_search_result(arguments)
+            if arguments.get("raw") is True:
+                text = search_result.raw_json()
+                result = {"content": [{"type": "text", "text": text}], "isError": False}
+            else:
+                result = _x_search_tool_result(search_result, arguments)
         _record_x_search("success", time.monotonic() - start)
         return result
     except Exception:

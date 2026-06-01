@@ -166,6 +166,7 @@ def test_health_reports_api_key_fallback_when_oauth_token_expired(monkeypatch):
     assert payload["status"] == "ok"
     assert payload["provider"] == "xai-api-key-fallback"
     assert payload["detail"] == "oauth token expired; using XAI_API_KEY fallback"
+    assert payload["oauth_refresh"]["reauth_required"] is False
 
 
 def test_upstream_retry_attempts_are_at_least_one(monkeypatch):
@@ -274,6 +275,45 @@ def test_oauth_client_id_is_imported_from_hermes_token_claims(tmp_path):
 
     assert state["client_id"] == "client-from-access"
     assert state["refresh_token"] == "refresh"
+
+
+def test_load_from_hermes_prefers_newest_usable_pool_credential(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "credential_pool": {
+                    "xai-oauth": [
+                        {
+                            "access_token": _unsigned_jwt({"client_id": "old-client", "exp": 1000}),
+                            "refresh_token": "old-refresh",
+                            "last_status": "exhausted",
+                            "last_refresh": "2026-05-18T04:19:30Z",
+                            "priority": 0,
+                        },
+                        {
+                            "access_token": _unsigned_jwt({"client_id": "stale-client", "exp": 2000}),
+                            "refresh_token": "stale-refresh",
+                            "last_refresh": "2026-06-01T07:15:56Z",
+                            "priority": 1,
+                        },
+                        {
+                            "access_token": _unsigned_jwt({"client_id": "new-client", "exp": 3000}),
+                            "refresh_token": "new-refresh",
+                            "last_refresh": "2026-06-01T07:53:56Z",
+                            "priority": 2,
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = asyncio.run(token_manager.load_from_hermes(auth_path))
+
+    assert state["client_id"] == "new-client"
+    assert state["refresh_token"] == "new-refresh"
 
 
 def test_missing_hermes_auth_file_stops_startup(tmp_path, monkeypatch):
@@ -530,7 +570,7 @@ def test_auth_headers_fall_back_to_xai_api_key_when_oauth_unavailable(monkeypatc
     assert headers == {"Authorization": "Bearer xai-test-key"}
 
 
-def test_refresh_failure_does_not_return_upstream_secret(monkeypatch):
+def test_refresh_failure_does_not_return_upstream_secret(monkeypatch, tmp_path):
     def fake_post(url, headers, data, timeout):
         request = httpx.Request("POST", url)
         return httpx.Response(
@@ -540,6 +580,12 @@ def test_refresh_failure_does_not_return_upstream_secret(monkeypatch):
         )
 
     monkeypatch.setattr(token_manager.httpx, "post", fake_post)
+    monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", tmp_path / "auth_state.json")
+
+    async def fake_load_from_hermes(auth_path=None):
+        return None
+
+    monkeypatch.setattr(token_manager, "load_from_hermes", fake_load_from_hermes)
 
     with pytest.raises(RuntimeError) as exc_info:
         asyncio.run(token_manager.refresh_access_token({
@@ -553,6 +599,86 @@ def test_refresh_failure_does_not_return_upstream_secret(monkeypatch):
     assert "super-secret" not in message
     assert "upstream-secret" not in message
     assert "user@example.com" not in message
+
+
+def test_refresh_failure_rehydrates_new_hermes_credential(monkeypatch, tmp_path):
+    future_token = _unsigned_jwt({"exp": 4_102_444_800, "client_id": "client-from-hermes"})
+
+    def fake_post(url, headers, data, timeout):
+        request = httpx.Request("POST", url)
+        return httpx.Response(400, request=request, text="refresh_token=old-secret")
+
+    async def fake_load_from_hermes(auth_path=None):
+        return {
+            "access_token": future_token,
+            "refresh_token": "new-refresh",
+            "client_id": "client-from-hermes",
+            "token_endpoint": "https://auth.x.ai/oauth2/token",
+        }
+
+    monkeypatch.setattr(token_manager.httpx, "post", fake_post)
+    monkeypatch.setattr(token_manager, "load_from_hermes", fake_load_from_hermes)
+    monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", tmp_path / "auth_state.json")
+
+    updated = asyncio.run(token_manager.refresh_access_token({
+        "access_token": "old-access",
+        "refresh_token": "old-refresh",
+        "client_id": "client-from-hermes",
+        "token_endpoint": "https://auth.x.ai/oauth2/token",
+    }))
+
+    assert updated["access_token"] == future_token
+    assert updated["refresh_token"] == "new-refresh"
+    assert updated["last_refresh_status"] == "rehydrated_from_hermes"
+    assert updated["refresh_failure_count"] == 1
+    assert updated["reauth_required"] is False
+
+
+def test_rehydrate_does_not_overwrite_newer_local_token(monkeypatch, tmp_path):
+    newer_token = _unsigned_jwt({"exp": 4_102_444_800, "client_id": "client-from-hermes"})
+    older_token = _unsigned_jwt({"exp": 4_102_441_200, "client_id": "client-from-hermes"})
+
+    async def fake_load_from_hermes(auth_path=None):
+        return {
+            "access_token": older_token,
+            "refresh_token": "older-refresh",
+            "client_id": "client-from-hermes",
+            "token_endpoint": "https://auth.x.ai/oauth2/token",
+        }
+
+    state_path = tmp_path / "auth_state.json"
+    monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", state_path)
+    monkeypatch.setattr(token_manager, "load_from_hermes", fake_load_from_hermes)
+
+    result = asyncio.run(token_manager.rehydrate_from_hermes({
+        "access_token": newer_token,
+        "refresh_token": "newer-refresh",
+        "client_id": "client-from-hermes",
+    }))
+
+    assert result is None
+    assert not state_path.exists()
+
+
+def test_refresh_diagnostics_are_safe():
+    diagnostics = token_manager.get_refresh_diagnostics(
+        {
+            "last_refresh_status": "failure",
+            "last_refresh_error_class": "RuntimeError",
+            "refresh_failure_count": 2,
+            "refresh_success_count": 1,
+            "refresh_token_rotated": True,
+            "credential_source": "hermes_rehydrated",
+            "reauth_required": True,
+        }
+    )
+
+    assert diagnostics["last_refresh_status"] == "failure"
+    assert diagnostics["refresh_failure_count"] == 2
+    assert diagnostics["refresh_success_count"] == 1
+    assert diagnostics["refresh_token_rotated"] is True
+    assert diagnostics["credential_source"] == "hermes_rehydrated"
+    assert diagnostics["reauth_required"] is True
 
 
 def test_streaming_proxy_refreshes_and_retries_once_on_401(monkeypatch):

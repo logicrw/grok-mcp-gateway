@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import httpx
@@ -30,6 +30,9 @@ class ResponsesResult:
     citations: list[Dict[str, Any]]
     usage: Any
     model: str
+    inline_citations: list[Dict[str, Any]] = field(default_factory=list)
+    degraded: bool = False
+    credential_source: str = "unknown"
 
     def raw_json(self) -> str:
         return json.dumps(self.compact, ensure_ascii=False, separators=(",", ":"))
@@ -53,17 +56,44 @@ def _extract_output_text(response: Dict[str, Any]) -> str:
 def _compact_response(response: Dict[str, Any]) -> Dict[str, Any]:
     return {
         key: response.get(key)
-        for key in ("id", "model", "status", "usage", "output", "citations")
+        for key in ("id", "model", "status", "usage", "output", "citations", "inline_citations", "degraded")
         if response.get(key) is not None
     }
 
 
-def _extract_citations(response: Dict[str, Any]) -> list[Dict[str, Any]]:
+def _bounded_source(item: Dict[str, Any]) -> Dict[str, Any]:
+    allowed = {
+        "type",
+        "url",
+        "title",
+        "snippet",
+        "text",
+        "source",
+        "id",
+        "start_index",
+        "end_index",
+        "post_id",
+        "tweet_id",
+    }
+    compact = {key: item[key] for key in allowed if key in item}
+    if not compact:
+        compact = dict(item)
+    serialized = json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
+    if len(serialized) > 2048:
+        return {
+            "type": str(compact.get("type") or "xai_citation"),
+            "truncated": True,
+            "raw": sanitize_text(serialized)[:2048],
+        }
+    return compact
+
+
+def _extract_named_sources(response: Dict[str, Any], names: tuple[str, ...], *, max_items: int = 20) -> list[Dict[str, Any]]:
     citations: list[Dict[str, Any]] = []
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
-            for key in ("citations", "annotations", "sources"):
+            for key in names:
                 nested = value.get(key)
                 if isinstance(nested, list):
                     for item in nested:
@@ -79,11 +109,33 @@ def _extract_citations(response: Dict[str, Any]) -> list[Dict[str, Any]]:
     seen: set[str] = set()
     unique: list[Dict[str, Any]] = []
     for item in citations:
-        marker = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        marker = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+        bounded = _bounded_source(item)
         if marker not in seen:
             seen.add(marker)
-            unique.append(item)
+            unique.append(bounded)
+        if len(unique) >= max_items:
+            break
     return unique
+
+
+def _extract_citations(response: Dict[str, Any]) -> list[Dict[str, Any]]:
+    return _extract_named_sources(response, ("citations", "annotations", "sources"))
+
+
+def _extract_inline_citations(response: Dict[str, Any]) -> list[Dict[str, Any]]:
+    return _extract_named_sources(response, ("inline_citations",))
+
+
+def _extract_degraded(response: Dict[str, Any]) -> bool:
+    if isinstance(response.get("degraded"), bool):
+        return bool(response["degraded"])
+    output = response.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if isinstance(item, dict) and isinstance(item.get("degraded"), bool):
+                return bool(item["degraded"])
+    return False
 
 
 async def get_client() -> httpx.AsyncClient:
@@ -119,25 +171,21 @@ async def aclose_client() -> None:
     _client_loop = None
 
 
-async def _headers(*, force_refresh: bool = False) -> Dict[str, str]:
-    if force_refresh:
-        token = await token_manager.get_access_token(force_refresh=True)
-        auth_headers = {"Authorization": f"Bearer {token}"}
-    else:
-        auth_headers = await token_manager.get_auth_headers()
+async def _headers(*, force_refresh: bool = False) -> tuple[Dict[str, str], str]:
+    context = await token_manager.get_auth_context(force_refresh=force_refresh)
     return {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        **auth_headers,
-    }
+        **context["headers"],
+    }, str(context.get("credential_source") or "unknown")
 
 
 async def post(payload: Dict[str, Any]) -> ResponsesResult:
-    headers = await _headers()
+    headers, credential_source = await _headers()
     client = await get_client()
     response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
     if response.status_code == 401:
-        headers = await _headers(force_refresh=True)
+        headers, credential_source = await _headers(force_refresh=True)
         response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
     if response.status_code >= 400:
         if config.GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS:
@@ -156,4 +204,7 @@ async def post(payload: Dict[str, Any]) -> ResponsesResult:
         citations=_extract_citations(data),
         usage=data.get("usage"),
         model=str(data.get("model") or payload.get("model") or ""),
+        inline_citations=_extract_inline_citations(data),
+        degraded=_extract_degraded(data),
+        credential_source=credential_source,
     )

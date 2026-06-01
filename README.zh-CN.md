@@ -87,6 +87,17 @@ Responses API 暴露聚焦的 X Search MCP 工具。
 项目同时运行。本项目的定位是本地 Grok 模型接入，以及让非 Grok Agent 通过
 MCP 工具层调用 OAuth-backed X Search。
 
+### 和 `xurl` 的关系
+
+X Developers 也维护 [`xurl`](https://docs.x.com/tools/xurl)，这是官方 X API
+CLI，并且有配套 Hermes skill。如果你有 X Developer app，并且需要发帖、书签、
+timeline、媒体上传、点赞或列表管理等 API 级操作，`xurl` 路线更强。
+
+Grok MCP Gateway 默认走另一条路线：不需要 X Developer API credentials。它复用
+Hermes/xAI OAuth，并通过 xAI `x_search` 给本地 Agent 提供搜索能力。如果未来接入
+`xurl`，也应该作为可选扩展，并且默认关闭写操作，而不是替代当前的 OAuth-backed
+search gateway。
+
 ## 是什么 / 不是什么
 
 这个项目是：
@@ -323,6 +334,23 @@ POST http://127.0.0.1:9996/mcp
 | `model` | string | 否 | MCP 调用使用的 xAI 模型，默认是 `GROK_PROXY_MCP_MODEL` 或 `grok-4.3`。 |
 | `raw` | boolean | 否 | 返回压缩后的原始 xAI JSON，而不是抽取后的文本。 |
 
+`x_search` 会保留普通文本结果以兼容旧客户端，同时为能读取工具元数据的客户端
+提供 `structuredContent`：
+
+```json
+{
+  "schema_version": "x_search.v1",
+  "tool": "x_search",
+  "backend": "xai_x_search",
+  "answer": "...",
+  "citations": [],
+  "inline_citations": [],
+  "degraded": false,
+  "credential_source": "xai-oauth",
+  "request": {}
+}
+```
+
 ### `x_posts`
 
 这是结构化 best-effort 帖子抽取工具。它底层仍然使用 xAI `x_search`，但
@@ -368,6 +396,7 @@ gateway 会先编译常见时间表达，并要求返回 `x_posts.v1` 结构化 
   },
   "request": {},
   "sources": [],
+  "source_extraction_status": "not_available",
   "posts": []
 }
 ```
@@ -611,6 +640,10 @@ sudo systemctl enable --now grok-mcp-gateway
 `GROK_PROXY_*` 环境变量前缀和默认 token state 路径会继续保留，用来兼容早期
 安装。
 
+模型可用性取决于当前 xAI 订阅。共享配置里建议保留保守默认值；切换
+`GROK_PROXY_MCP_MODEL` 到更新或账号专属模型前，先用 `/v1/models` 和 live MCP
+smoke test 验证。
+
 ## 本地端点
 
 | Endpoint | Method | 说明 |
@@ -620,6 +653,11 @@ sudo systemctl enable --now grok-mcp-gateway
 | `/metrics` | `GET` | Prometheus-compatible metrics。 |
 | `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint，默认暴露 `x_search`、`x_posts`、`x_latest_posts`。 |
 | `/{path:path}` | any | 转发到 `https://api.x.ai/{path}`。 |
+
+`/health` 和 `/metrics` 会暴露 OAuth refresh 诊断信息，例如
+`last_refresh_status`、refresh 成功/失败次数、refresh token 是否轮换，以及
+`reauth_required`。当 refresh 失败时，gateway 会先检查 Hermes `auth.json` 里是否有
+更新的可用 xAI OAuth credential，再 fallback 到 `XAI_API_KEY`。
 
 ## 安全说明
 

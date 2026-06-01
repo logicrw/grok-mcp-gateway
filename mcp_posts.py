@@ -60,6 +60,7 @@ def _post_output_schema() -> Dict[str, Any]:
             "filter_reliability",
             "request",
             "sources",
+            "source_extraction_status",
             "posts",
         ],
         "additionalProperties": True,
@@ -75,6 +76,9 @@ def _post_output_schema() -> Dict[str, Any]:
             "filter_reliability": {"type": "object"},
             "request": {"type": "object"},
             "sources": {"type": "array"},
+            "source_extraction_status": {
+                "enum": ["not_available", "extracted_unmapped", "citation_backed"]
+            },
             "posts": {
                 "type": "array",
                 "items": {
@@ -109,7 +113,6 @@ def posts_tool_definition(default_model: str) -> Dict[str, Any]:
         ),
         "inputSchema": {
             "type": "object",
-            "anyOf": [{"required": ["handles"]}, {"required": ["query"]}],
             "properties": {
                 "handles": {
                     "type": "array",
@@ -695,6 +698,8 @@ def normalize_posts_payload(
     posts = [_normalize_post(item) for item in posts_value] if isinstance(posts_value, list) else []
     if not posts and parsed.get("raw_text"):
         raw_text = str(parsed.get("raw_text"))
+    normalized_sources = sources or []
+    source_status = "extracted_unmapped" if normalized_sources else "not_available"
 
     structured = {
         "schema_version": SCHEMA_VERSION,
@@ -712,7 +717,8 @@ def normalize_posts_payload(
         "filter_reliability": _default_filter_reliability(metadata),
         "request": _request_metadata(metadata),
         "compiled_time_range": metadata.get("compiled_time_range"),
-        "sources": sources or [],
+        "sources": normalized_sources,
+        "source_extraction_status": source_status,
         "posts": posts,
     }
     if parsed.get("parse_warning"):

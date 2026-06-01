@@ -75,6 +75,10 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _metric_label(value: object) -> str:
+    return str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+
+
 def _validate_startup_security(host: str, proxy_api_key: Optional[str]) -> None:
     """Refuse unauthenticated non-loopback binds."""
     if _is_loopback_host(host):
@@ -304,11 +308,14 @@ async def _token_watcher() -> None:
             if exp:
                 remaining = exp - time.time()
                 if remaining < config.TOKEN_REFRESH_WINDOW:
-                    if await token_manager.get_api_key_fallback():
-                        logger.info("OAuth token expiring in %.0fs; XAI_API_KEY fallback is configured.", remaining)
-                    else:
-                        logger.info("Token expiring in %.0fs, pre-refreshing...", remaining)
+                    logger.info("Token expiring in %.0fs, pre-refreshing...", remaining)
+                    try:
                         await token_manager.get_access_token(force_refresh=True)
+                    except Exception:
+                        if await token_manager.get_api_key_fallback():
+                            logger.info("OAuth pre-refresh failed; XAI_API_KEY fallback is configured.")
+                        else:
+                            raise
                 else:
                     logger.debug("Token healthy (expires in %.0fs)", remaining)
         except asyncio.CancelledError:
@@ -333,12 +340,12 @@ async def _hermes_watcher() -> None:
             if mtime != _last_hermes_mtime:
                 _last_hermes_mtime = mtime
                 logger.info("Hermes auth.json changed, re-importing tokens...")
-                hermes_state = await token_manager.load_from_hermes(config.HERMES_AUTH_PATH)
+                current_state = await token_manager.read_local_state()
+                hermes_state = await token_manager.rehydrate_from_hermes(current_state)
                 if hermes_state and hermes_state.get("access_token") and hermes_state.get("client_id"):
-                    await token_manager.save_local_state(hermes_state)
                     logger.info("Hermes tokens re-imported.")
                 else:
-                    logger.warning("Hermes auth.json changed but no complete xai-oauth credentials found.")
+                    logger.info("Hermes auth.json changed but no newer usable xai-oauth credential was found.")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -493,6 +500,7 @@ async def health(response: Response, deep: bool = False) -> dict:
         access_token = state.get("access_token", "")
         exp = token_manager.get_token_expiry(access_token)
         api_key_fallback = bool(await token_manager.get_api_key_fallback())
+        refresh = token_manager.get_refresh_diagnostics(state)
         exp_str = None
         if exp:
             exp_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp))
@@ -502,6 +510,7 @@ async def health(response: Response, deep: bool = False) -> dict:
             "api_base": token_manager.XAI_API_BASE,
             "token_expires_at": exp_str,
             "token_endpoint": state.get("token_endpoint"),
+            "oauth_refresh": refresh,
         }
         if exp and exp <= time.time():
             if api_key_fallback:
@@ -568,6 +577,28 @@ async def metrics() -> Response:
             lines.append("# HELP proxy_token_expires_at Unix timestamp of token expiry")
             lines.append("# TYPE proxy_token_expires_at gauge")
             lines.append(f"proxy_token_expires_at {exp}")
+            lines.append("# HELP proxy_token_seconds_to_expiry Seconds until access token expiry")
+            lines.append("# TYPE proxy_token_seconds_to_expiry gauge")
+            lines.append(f"proxy_token_seconds_to_expiry {max(0, exp - time.time())}")
+        refresh = token_manager.get_refresh_diagnostics(state)
+        lines.append("# HELP proxy_oauth_refresh_success_total Successful OAuth refreshes")
+        lines.append("# TYPE proxy_oauth_refresh_success_total counter")
+        lines.append(f"proxy_oauth_refresh_success_total {refresh['refresh_success_count']}")
+        lines.append("# HELP proxy_oauth_refresh_failure_total Failed OAuth refreshes")
+        lines.append("# TYPE proxy_oauth_refresh_failure_total counter")
+        lines.append(f"proxy_oauth_refresh_failure_total {refresh['refresh_failure_count']}")
+        lines.append("# HELP proxy_oauth_refresh_token_rotated Whether the latest refresh changed the refresh token")
+        lines.append("# TYPE proxy_oauth_refresh_token_rotated gauge")
+        lines.append(f"proxy_oauth_refresh_token_rotated {1 if refresh.get('refresh_token_rotated') else 0}")
+        lines.append("# HELP proxy_oauth_reauth_required Whether OAuth needs manual reauthorization")
+        lines.append("# TYPE proxy_oauth_reauth_required gauge")
+        lines.append(f"proxy_oauth_reauth_required {1 if refresh.get('reauth_required') else 0}")
+        lines.append("# HELP proxy_oauth_refresh_status Last OAuth refresh status")
+        lines.append("# TYPE proxy_oauth_refresh_status gauge")
+        lines.append(f'proxy_oauth_refresh_status{{status="{_metric_label(refresh.get("last_refresh_status"))}"}} 1')
+        lines.append("# HELP proxy_oauth_credential_source Current OAuth credential source")
+        lines.append("# TYPE proxy_oauth_credential_source gauge")
+        lines.append(f'proxy_oauth_credential_source{{source="{_metric_label(refresh.get("credential_source"))}"}} 1')
     except Exception:
         pass
 

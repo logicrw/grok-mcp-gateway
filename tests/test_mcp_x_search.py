@@ -243,6 +243,7 @@ def test_tools_list_returns_search_posts_and_latest_posts_tools():
 
     assert set(tools) == {"x_search", "x_posts", "x_latest_posts"}
     assert tools["x_search"]["inputSchema"]["required"] == ["query"]
+    assert tools["x_search"]["outputSchema"]["properties"]["schema_version"]["const"] == "x_search.v1"
     assert "from_date" in tools["x_search"]["inputSchema"]["properties"]
     assert "to_date" in tools["x_search"]["inputSchema"]["properties"]
     to_date_description = tools["x_search"]["inputSchema"]["properties"]["to_date"]["description"]
@@ -251,8 +252,10 @@ def test_tools_list_returns_search_posts_and_latest_posts_tools():
     assert "excluded_x_handles" in tools["x_search"]["inputSchema"]["properties"]
     assert "time_range" in tools["x_posts"]["inputSchema"]["properties"]
     assert "best_effort_filters" in tools["x_posts"]["inputSchema"]["properties"]
+    assert "anyOf" not in tools["x_posts"]["inputSchema"]
     assert tools["x_posts"]["outputSchema"]["properties"]["timeline_verified"]["const"] is False
     assert "sources" in tools["x_posts"]["outputSchema"]["required"]
+    assert "source_extraction_status" in tools["x_posts"]["outputSchema"]["required"]
     assert tools["x_latest_posts"]["inputSchema"]["required"] == ["handle"]
     assert "count" in tools["x_latest_posts"]["inputSchema"]["properties"]
 
@@ -334,9 +337,17 @@ def test_tools_call_wraps_search_result(monkeypatch):
 
     async def fake_call(arguments):
         assert arguments == {"query": "latest @xai posts"}
-        return "searched"
+        return xai_responses.ResponsesResult(
+            "searched",
+            {},
+            [{"url": "https://x.com/xai/status/1"}],
+            {"input_tokens": 1},
+            "grok-4.3",
+            inline_citations=[{"url": "https://x.com/xai/status/1"}],
+            credential_source="xai-oauth",
+        )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -349,7 +360,15 @@ def test_tools_call_wraps_search_result(monkeypatch):
         )
     )
 
-    assert response["result"] == {"content": [{"type": "text", "text": "searched"}], "isError": False}
+    assert response["result"]["content"] == [{"type": "text", "text": "searched"}]
+    assert response["result"]["isError"] is False
+    structured = response["result"]["structuredContent"]
+    assert structured["schema_version"] == "x_search.v1"
+    assert structured["answer"] == "searched"
+    assert structured["citations"] == [{"url": "https://x.com/xai/status/1"}]
+    assert structured["inline_citations"] == [{"url": "https://x.com/xai/status/1"}]
+    assert structured["credential_source"] == "xai-oauth"
+    assert structured["request"]["query"] == "latest @xai posts"
     assert mcp_x_search._x_search_total_count == before + 1
 
 
@@ -359,7 +378,7 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
             "xAI Responses request failed with upstream status 500: refresh_token=super-secret Authorization: Bearer abc"
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search", fake_call)
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -379,8 +398,8 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
 
 
 def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
-    async def fake_auth_headers():
-        return {"Authorization": "Bearer local-token"}
+    async def fake_auth_context(*, force_refresh=False):
+        return {"headers": {"Authorization": "Bearer local-token"}, "credential_source": "xai-oauth"}
 
     def handler(request):
         return httpx.Response(
@@ -390,7 +409,7 @@ def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
         )
 
     async def run():
-        monkeypatch.setattr(xai_responses.token_manager, "get_auth_headers", fake_auth_headers)
+        monkeypatch.setattr(xai_responses.token_manager, "get_auth_context", fake_auth_context)
         xai_responses._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         xai_responses._client_loop = asyncio.get_running_loop()
         try:
@@ -415,12 +434,10 @@ def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
 def test_xai_responses_retries_once_on_401(monkeypatch):
     calls = {"count": 0, "force_refresh": []}
 
-    async def fake_auth_headers():
-        return {"Authorization": "Bearer stale"}
-
-    async def fake_access_token(*, force_refresh=False):
+    async def fake_auth_context(*, force_refresh=False):
         calls["force_refresh"].append(force_refresh)
-        return "fresh"
+        token = "fresh" if force_refresh else "stale"
+        return {"headers": {"Authorization": f"Bearer {token}"}, "credential_source": "xai-oauth"}
 
     def handler(request):
         calls["count"] += 1
@@ -431,8 +448,7 @@ def test_xai_responses_retries_once_on_401(monkeypatch):
         return httpx.Response(200, request=request, json={"output_text": "ok", "model": "grok-4.3"})
 
     async def run():
-        monkeypatch.setattr(xai_responses.token_manager, "get_auth_headers", fake_auth_headers)
-        monkeypatch.setattr(xai_responses.token_manager, "get_access_token", fake_access_token)
+        monkeypatch.setattr(xai_responses.token_manager, "get_auth_context", fake_auth_context)
         xai_responses._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         xai_responses._client_loop = asyncio.get_running_loop()
         try:
@@ -443,8 +459,19 @@ def test_xai_responses_retries_once_on_401(monkeypatch):
     result = asyncio.run(run())
 
     assert result.text == "ok"
+    assert result.credential_source == "xai-oauth"
     assert calls["count"] == 2
-    assert calls["force_refresh"] == [True]
+    assert calls["force_refresh"] == [False, True]
+
+
+def test_xai_responses_caps_citation_sources():
+    citations = [{"url": f"https://x.com/xai/status/{idx}", "text": "x" * 3000} for idx in range(25)]
+
+    extracted = xai_responses._extract_citations({"citations": citations})
+
+    assert len(extracted) == 20
+    assert extracted[0]["truncated"] is True
+    assert len(extracted[0]["raw"]) <= 2048
 
 
 def test_tools_call_wraps_latest_posts_result(monkeypatch):
@@ -491,7 +518,13 @@ def test_tools_call_wraps_posts_result(monkeypatch):
 
     async def fake_call(arguments):
         seen.update(arguments)
-        return xai_responses.ResponsesResult('{"posts":[{"text":"hello"}]}', {}, [], None, "grok-4.3")
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"hello"}]}',
+            {},
+            [{"url": "https://x.com/xai/status/1"}],
+            None,
+            "grok-4.3",
+        )
 
     monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
 
@@ -515,6 +548,8 @@ def test_tools_call_wraps_posts_result(monkeypatch):
     assert "Hermes" in seen["query"]
     assert response["result"]["structuredContent"]["posts"][0]["text"] == "hello"
     assert response["result"]["structuredContent"]["schema_version"] == "x_posts.v1"
+    assert response["result"]["structuredContent"]["source_extraction_status"] == "extracted_unmapped"
+    assert response["result"]["structuredContent"]["sources"] == [{"url": "https://x.com/xai/status/1"}]
     assert mcp_x_search._x_search_total_count == before + 1
 
 

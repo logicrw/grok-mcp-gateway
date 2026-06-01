@@ -91,6 +91,19 @@ actions such as account or posting workflows. Keep this gateway for local Grok
 model access and OAuth-backed X Search that non-Grok agents can call through
 their MCP tool layer.
 
+### Relationship to `xurl`
+
+X Developers also publish [`xurl`](https://docs.x.com/tools/xurl), an official
+X API CLI with a Hermes skill. That route is stronger when you have an X
+Developer app and need API-grade actions such as posting, bookmarks, timelines,
+media upload, likes, or list management.
+
+Grok MCP Gateway intentionally keeps a different default: no X Developer API
+credentials are required. It uses Hermes/xAI OAuth and xAI `x_search` for local
+agent search. If this project adds `xurl` support later, it should be an
+optional extension with write actions disabled by default, not a replacement for
+the current OAuth-backed search gateway.
+
 ## What This Is / Is Not
 
 This project is:
@@ -337,6 +350,23 @@ It exposes three tools by default:
 | `model` | string | no | xAI model for the MCP call. Defaults to `GROK_PROXY_MCP_MODEL` or `grok-4.3`. |
 | `raw` | boolean | no | Return compact raw xAI response JSON instead of extracted text. |
 
+`x_search` returns normal text content for compatibility and also exposes
+`structuredContent` for clients that can inspect tool metadata:
+
+```json
+{
+  "schema_version": "x_search.v1",
+  "tool": "x_search",
+  "backend": "xai_x_search",
+  "answer": "...",
+  "citations": [],
+  "inline_citations": [],
+  "degraded": false,
+  "credential_source": "xai-oauth",
+  "request": {}
+}
+```
+
 ### `x_posts`
 
 This is the structured best-effort extraction surface. It still uses xAI
@@ -384,6 +414,7 @@ All `x_posts` and `x_latest_posts` results include:
   },
   "request": {},
   "sources": [],
+  "source_extraction_status": "not_available",
   "posts": []
 }
 ```
@@ -630,6 +661,10 @@ sudo systemctl enable --now grok-mcp-gateway
 The `GROK_PROXY_*` environment prefix and the default token-state path are kept
 for upgrade compatibility with earlier installs.
 
+Model availability depends on the active xAI subscription. Keep the default
+model conservative for shared configs, and use `/v1/models` plus live MCP smoke
+tests before switching `GROK_PROXY_MCP_MODEL` to a newer account-specific model.
+
 ## Local Endpoints
 
 | Endpoint | Method | Description |
@@ -639,6 +674,12 @@ for upgrade compatibility with earlier installs.
 | `/metrics` | `GET` | Prometheus-compatible metrics. |
 | `/mcp` | `POST` | HTTP JSON-RPC MCP endpoint exposing `x_search`, `x_posts`, and `x_latest_posts` by default. |
 | `/{path:path}` | any | Forwarded to `https://api.x.ai/{path}`. |
+
+`/health` and `/metrics` include OAuth refresh diagnostics such as
+`last_refresh_status`, refresh success/failure counters, token rotation state,
+and `reauth_required`. When refresh fails, the gateway first checks Hermes
+`auth.json` for a newer usable xAI OAuth credential before falling back to
+`XAI_API_KEY`.
 
 ## Security Notes
 
