@@ -504,26 +504,6 @@ async def save_local_state(data: Dict[str, Any]) -> None:
     await _save_json(LOCAL_AUTH_PATH, data)
 
 
-def _read_api_key_file_sync(path: Path) -> str:
-    _restrict_existing_file(path)
-    return path.read_text(encoding="utf-8").strip()
-
-
-async def get_api_key_fallback() -> str:
-    """Return an xAI API key fallback, if configured."""
-    api_key = str(getattr(config, "XAI_API_KEY", "") or "").strip()
-    if api_key:
-        return api_key
-
-    api_key_file = getattr(config, "XAI_API_KEY_FILE", None)
-    if not api_key_file:
-        return ""
-    try:
-        return await asyncio.to_thread(_read_api_key_file_sync, Path(api_key_file))
-    except FileNotFoundError:
-        return ""
-
-
 def get_token_expiry(access_token: str) -> Optional[float]:
     """Return the Unix timestamp when the access token expires, or None."""
     return _decode_jwt_exp(access_token)
@@ -537,20 +517,11 @@ async def get_auth_headers() -> Dict[str, str]:
 
 async def get_auth_context(*, force_refresh: bool = False) -> Dict[str, Any]:
     """Return xAI auth headers plus the credential source used."""
-    try:
-        if force_refresh:
-            token = await get_access_token(force_refresh=True)
-        else:
-            token = await get_access_token()
-        credential_source = "xai-oauth"
-    except Exception as exc:
-        api_key = await get_api_key_fallback()
-        if not api_key:
-            raise
-        logger.warning("OAuth token unavailable; using XAI_API_KEY fallback: %s", exc.__class__.__name__)
-        token = api_key
-        credential_source = "xai-api-key-fallback"
+    if force_refresh:
+        token = await get_access_token(force_refresh=True)
+    else:
+        token = await get_access_token()
     return {
         "headers": {"Authorization": f"Bearer {token}"},
-        "credential_source": credential_source,
+        "credential_source": "xai-oauth",
     }

@@ -642,8 +642,6 @@ sudo systemctl enable --now grok-mcp-gateway
 | `PROXY_API_KEY` | unset | Optional local proxy auth key. Required when binding outside loopback. Non-loopback keys must be at least 16 characters; 32+ random characters are recommended. Accepted as `Authorization: Bearer <key>` or `X-Proxy-Api-Key: <key>`. |
 | `GROK_PROXY_AUTH_STATE` | `~/.local/state/grok-oauth-proxy/auth_state.json` | Proxy-owned OAuth token state. |
 | `HERMES_AUTH_PATH` | `~/.hermes/auth.json` | Hermes auth store. |
-| `XAI_API_KEY` | unset | Optional xAI API-key fallback when Hermes OAuth token resolution fails. |
-| `XAI_API_KEY_FILE` | unset | Optional path to a private file containing the xAI API-key fallback. Prefer this for LaunchAgent/systemd services so secrets are not embedded in service definitions. |
 | `LOG_LEVEL` | `INFO` | Python app log level. |
 | `TOKEN_REFRESH_WINDOW` | `300` | Seconds before expiry to refresh in the background. |
 | `HERMES_POLL_INTERVAL` | `60` | Seconds between Hermes auth file checks. |
@@ -678,8 +676,8 @@ tests before switching `GROK_PROXY_MCP_MODEL` to a newer account-specific model.
 `/health` and `/metrics` include OAuth refresh diagnostics such as
 `last_refresh_status`, refresh success/failure counters, token rotation state,
 and `reauth_required`. When refresh fails, the gateway first checks Hermes
-`auth.json` for a newer usable xAI OAuth credential before falling back to
-`XAI_API_KEY`.
+`auth.json` for a newer usable xAI OAuth credential. If no newer credential is
+available, the gateway reports an OAuth error and requires reauthorization.
 
 ## Security Notes
 

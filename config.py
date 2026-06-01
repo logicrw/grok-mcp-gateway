@@ -56,9 +56,6 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 HERMES_AUTH_PATH: Path = Path(
     os.getenv("HERMES_AUTH_PATH", str(Path.home() / ".hermes" / "auth.json"))
 ).expanduser()
-XAI_API_KEY: str = os.getenv("XAI_API_KEY", "").strip()
-_XAI_API_KEY_FILE_RAW = os.getenv("XAI_API_KEY_FILE", "").strip()
-XAI_API_KEY_FILE: Optional[Path] = Path(_XAI_API_KEY_FILE_RAW).expanduser() if _XAI_API_KEY_FILE_RAW else None
 
 # Optional local proxy authentication. Required automatically when binding to a
 # non-loopback address, because incoming clients otherwise get raw xAI OAuth use.
