@@ -11,15 +11,19 @@ from typing import Any, Dict, Optional
 
 import config
 import mcp_posts
+import mcp_retrieve
 import xai_responses
 
 X_SEARCH_TOOL_NAME = "x_search"
 POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
 LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
+RETRIEVE_TOOL_NAME = mcp_retrieve.RETRIEVE_TOOL_NAME
 TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_VERSION = "0.1.0"
-DEFAULT_MODEL = os.getenv("GROK_PROXY_MCP_MODEL", "grok-4.3").strip() or "grok-4.3"
-TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
+DEFAULT_MODEL = (os.getenv("GROK_PROXY_RETRIEVE_MODEL") or os.getenv("GROK_PROXY_MCP_MODEL") or "grok-4.3").strip() or "grok-4.3"
+TOOL_NAMES = {RETRIEVE_TOOL_NAME}
+REMOVED_TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
+X_SEARCH_INPUT_MAX_CHARS = 8000
 X_SEARCH_ARGUMENT_KEYS = {
     "query",
     "allowed_x_handles",
@@ -42,37 +46,6 @@ _build_posts_search_arguments = mcp_posts.build_posts_search_arguments
 _build_latest_posts_search_arguments = mcp_posts.build_latest_posts_search_arguments
 
 
-def _x_search_output_schema() -> Dict[str, Any]:
-    return {
-        "type": "object",
-        "required": [
-            "schema_version",
-            "tool",
-            "backend",
-            "answer",
-            "citations",
-            "inline_citations",
-            "degraded",
-            "credential_source",
-            "request",
-        ],
-        "additionalProperties": True,
-        "properties": {
-            "schema_version": {"const": "x_search.v1"},
-            "tool": {"const": X_SEARCH_TOOL_NAME},
-            "backend": {"const": "xai_x_search"},
-            "answer": {"type": "string"},
-            "citations": {"type": "array"},
-            "inline_citations": {"type": "array"},
-            "degraded": {"type": "boolean"},
-            "credential_source": {"type": "string"},
-            "model": {"type": "string"},
-            "usage": {},
-            "request": {"type": "object"},
-        },
-    }
-
-
 def tool_enabled(tool_name: str) -> bool:
     return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
 
@@ -80,63 +53,8 @@ def tool_enabled(tool_name: str) -> bool:
 _tool_enabled = tool_enabled
 
 
-def _x_search_tool_definition() -> Dict[str, Any]:
-    today = date.today().isoformat()
-    return {
-        "name": X_SEARCH_TOOL_NAME,
-        "description": (
-            "Search X posts through xAI's x_search tool using the local Hermes OAuth session. "
-            f"Current local date: {today}. For latest, today, this week, or other time-sensitive "
-            "requests, pass from_date/to_date explicitly instead of relying only on natural language."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural-language search request. Include handles, topic, time window, and desired output.",
-                },
-                "allowed_x_handles": {
-                    "type": "array",
-                    "maxItems": 10,
-                    "items": {"type": "string", "pattern": "^@?[A-Za-z0-9_]{1,15}$"},
-                    "description": "Optional handle allowlist, for example ['elonmusk', 'xai'].",
-                },
-                "excluded_x_handles": {
-                    "type": "array",
-                    "maxItems": 10,
-                    "items": {"type": "string", "pattern": "^@?[A-Za-z0-9_]{1,15}$"},
-                    "description": "Optional handle blocklist. Cannot be used with allowed_x_handles.",
-                },
-                "from_date": {
-                    "type": "string",
-                    "description": "Optional ISO8601 search start date, for example '2026-05-18'.",
-                },
-                "to_date": {
-                    "type": "string",
-                    "description": (
-                        "Optional inclusive ISO8601 search end date, for example '2026-05-18'. "
-                        "Date-only values are passed through unchanged."
-                    ),
-                },
-                "enable_image_understanding": {"type": "boolean"},
-                "enable_video_understanding": {"type": "boolean"},
-                "model": {"type": "string", "description": f"Optional xAI model. Defaults to {DEFAULT_MODEL}."},
-                "raw": {"type": "boolean", "description": "Return the compact raw xAI response JSON."},
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-        "outputSchema": _x_search_output_schema(),
-    }
-
-
 def tool_definitions() -> list[Dict[str, Any]]:
-    definitions = [
-        _x_search_tool_definition(),
-        mcp_posts.posts_tool_definition(DEFAULT_MODEL),
-        mcp_posts.latest_posts_tool_definition(DEFAULT_MODEL),
-    ]
+    definitions = [mcp_retrieve.retrieve_tool_definition(DEFAULT_MODEL)]
     return [definition for definition in definitions if tool_enabled(str(definition["name"]))]
 
 
@@ -180,10 +98,6 @@ def _extract_output_text(response: Dict[str, Any]) -> str:
     return xai_responses._extract_output_text(response)
 
 
-def _compact_response(response: Dict[str, Any]) -> Dict[str, Any]:
-    return xai_responses._compact_response(response)
-
-
 def _record_x_search(status: str, duration: float) -> None:
     global _x_search_total_count, _x_search_total_duration
     _x_search_counts[status] += 1
@@ -193,27 +107,28 @@ def _record_x_search(status: str, duration: float) -> None:
 
 def metrics_lines() -> list[str]:
     lines = [
-        "# HELP mcp_x_search_requests_total Total MCP x_search tool calls by status",
-        "# TYPE mcp_x_search_requests_total counter",
+        "# HELP mcp_x_retrieve_requests_total Total MCP x_retrieve tool calls by status",
+        "# TYPE mcp_x_retrieve_requests_total counter",
     ]
     for status in ("success", "error"):
-        lines.append(f'mcp_x_search_requests_total{{status="{status}"}} {_x_search_counts[status]}')
+        lines.append(f'mcp_x_retrieve_requests_total{{status="{status}"}} {_x_search_counts[status]}')
     lines.extend(
         [
-            "# HELP mcp_x_search_request_duration_seconds_total Total MCP x_search call duration",
-            "# TYPE mcp_x_search_request_duration_seconds_total counter",
-            f"mcp_x_search_request_duration_seconds_total {_x_search_total_duration}",
-            "# HELP mcp_x_search_request_count_total Total MCP x_search call count",
-            "# TYPE mcp_x_search_request_count_total counter",
-            f"mcp_x_search_request_count_total {_x_search_total_count}",
-            "# HELP mcp_x_search_active_requests Active MCP x_search calls",
-            "# TYPE mcp_x_search_active_requests gauge",
-            f"mcp_x_search_active_requests {_x_search_active}",
-            "# HELP mcp_x_search_concurrency_limit Configured MCP x_search concurrency limit",
-            "# TYPE mcp_x_search_concurrency_limit gauge",
-            f"mcp_x_search_concurrency_limit {config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY}",
+            "# HELP mcp_x_retrieve_request_duration_seconds_total Total MCP x_retrieve call duration",
+            "# TYPE mcp_x_retrieve_request_duration_seconds_total counter",
+            f"mcp_x_retrieve_request_duration_seconds_total {_x_search_total_duration}",
+            "# HELP mcp_x_retrieve_request_count_total Total MCP x_retrieve call count",
+            "# TYPE mcp_x_retrieve_request_count_total counter",
+            f"mcp_x_retrieve_request_count_total {_x_search_total_count}",
+            "# HELP mcp_x_retrieve_active_requests Active MCP x_retrieve calls",
+            "# TYPE mcp_x_retrieve_active_requests gauge",
+            f"mcp_x_retrieve_active_requests {_x_search_active}",
+            "# HELP mcp_x_retrieve_concurrency_limit Configured MCP x_retrieve concurrency limit",
+            "# TYPE mcp_x_retrieve_concurrency_limit gauge",
+            f"mcp_x_retrieve_concurrency_limit {config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY}",
         ]
     )
+    lines.extend(mcp_retrieve.metrics_lines())
     return lines
 
 
@@ -227,8 +142,8 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
     query = query_value.strip()
     if not query:
         raise ValueError("query is required")
-    if len(query) > 2000:
-        raise ValueError("query must be at most 2000 characters")
+    if len(query) > X_SEARCH_INPUT_MAX_CHARS:
+        raise ValueError(f"query must be at most {X_SEARCH_INPUT_MAX_CHARS} characters")
 
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
     return {
@@ -244,57 +159,8 @@ async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.Resp
         return await xai_responses.post(_x_search_payload(arguments))
 
 
-async def _call_x_search(arguments: Dict[str, Any]) -> str:
-    result = await _call_x_search_result(arguments)
-    if arguments.get("raw") is True:
-        return result.raw_json()
-
-    return result.text or result.raw_json()
-
-
-def _x_search_request_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "query": arguments.get("query"),
-        "allowed_x_handles": arguments.get("allowed_x_handles") or [],
-        "excluded_x_handles": arguments.get("excluded_x_handles") or [],
-        "from_date": arguments.get("from_date"),
-        "to_date": arguments.get("to_date"),
-        "enable_image_understanding": bool(arguments.get("enable_image_understanding", False)),
-        "enable_video_understanding": bool(arguments.get("enable_video_understanding", False)),
-        "model": arguments.get("model") or DEFAULT_MODEL,
-    }
-
-
-def _x_search_tool_result(result: xai_responses.ResponsesResult, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    answer = result.text or result.raw_json()
-    structured = {
-        "schema_version": "x_search.v1",
-        "tool": X_SEARCH_TOOL_NAME,
-        "backend": "xai_x_search",
-        "answer": answer,
-        "citations": result.citations,
-        "inline_citations": result.inline_citations,
-        "degraded": bool(result.degraded),
-        "credential_source": result.credential_source,
-        "model": result.model,
-        "usage": result.usage,
-        "request": _x_search_request_metadata(arguments),
-    }
-    return {
-        "content": [{"type": "text", "text": answer}],
-        "structuredContent": structured,
-        "isError": False,
-    }
-
-
-async def _call_posts_result(arguments: Dict[str, Any], *, tool_name: str) -> Dict[str, Any]:
-    if tool_name == LATEST_POSTS_TOOL_NAME:
-        search_arguments, metadata = _build_latest_posts_search_arguments(arguments)
-    else:
-        search_arguments, metadata = _build_posts_search_arguments(arguments)
-    result = await _call_x_search_result(search_arguments)
-    text = result.text or result.raw_json()
-    return mcp_posts.posts_result(tool_name, text, metadata, sources=result.citations)
+def tool_removed(tool_name: str) -> bool:
+    return tool_name in REMOVED_TOOL_NAMES
 
 
 async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -302,15 +168,9 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
     global _x_search_active
     _x_search_active += 1
     try:
-        if tool_name in {POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}:
-            result = await _call_posts_result(arguments, tool_name=tool_name)
-        else:
-            search_result = await _call_x_search_result(arguments)
-            if arguments.get("raw") is True:
-                text = search_result.raw_json()
-                result = {"content": [{"type": "text", "text": text}], "isError": False}
-            else:
-                result = _x_search_tool_result(search_result, arguments)
+        if tool_name != RETRIEVE_TOOL_NAME:
+            raise ValueError(f"tool removed in vNext: {tool_name}. Use x_retrieve.")
+        result = await mcp_retrieve.call_retrieve(arguments, search=_call_x_search_result)
         _record_x_search("success", time.monotonic() - start)
         return result
     except Exception:

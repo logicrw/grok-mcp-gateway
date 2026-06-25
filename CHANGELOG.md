@@ -6,7 +6,10 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Added
 
-- Add a fixed `x_posts.v1` MCP output contract with `schema_version`,
+- Add `x_retrieve.v1` as the single public/default MCP retrieval tool for
+  semantic X research, structured post retrieval, source discovery, reaction
+  tracking, and latest-by-handle retrieval.
+- Keep an internal `x_posts.v1` normalization contract with `schema_version`,
   `tool_version`, `backend`, `timeline_verified=false`, `warnings`,
   `filter_reliability`, `request`, `sources`, and normalized `posts`.
 - Add `mcp_server.py` as the JSON-RPC protocol layer and `xai_responses.py` as
@@ -23,18 +26,27 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - Document the project scope explicitly so users do not confuse it with a
   general MCP router, Node.js template, Docker deployment, or official X API MCP
   replacement.
-- Add `x_posts`, a structured MCP extraction tool for handles, topics, flexible
-  time ranges, and best-effort engagement filters on top of the existing xAI
-  `x_search` backend.
-- Keep `x_latest_posts` as a shortcut for the common single-handle latest-posts
-  workflow.
+- Preserve the previous `x_posts` and `x_latest_posts` capabilities inside
+  `x_retrieve` modes instead of exposing separate public MCP tools.
+- Add retrieve-specific model environment variables:
+  `GROK_PROXY_RETRIEVE_MODEL` and `GROK_PROXY_RETRIEVE_RAW_MODEL`, while keeping
+  `GROK_PROXY_MCP_MODEL` and `GROK_PROXY_MCP_RAW_MODEL` as compatibility
+  fallbacks.
 
 ### Changed
 
-- Rename `engagement_filter` to `best_effort_filters` in the public `x_posts`
-  schema. The old key is still accepted as a deprecated compatibility alias.
-- Restrict `x_posts` sorting to `latest` and `relevance` to avoid implying
-  API-grade popularity sorting.
+- Default `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` is now `x_retrieve`.
+- Remove `x_search`, `x_posts`, and `x_latest_posts` from the public vNext MCP
+  `tools/list`; calls to those old tool names now return a clear removed-tool
+  error pointing to `x_retrieve`.
+- Extend MCP metrics with `mcp_x_retrieve_quality_gate_total` and
+  `mcp_x_retrieve_raw_expansion_total` so production raw-expansion behavior is
+  observable.
+- Rename `engagement_filter` to `best_effort_filters` in the internal
+  structured-post request builder. The old key is still accepted as a deprecated
+  compatibility alias for the builder.
+- Restrict structured-post sorting to `latest` and `relevance` to avoid
+  implying API-grade popularity sorting.
 - Upgrade MCP initialize responses to protocol version `2025-06-18`.
 - Move startup hard exits to the CLI boundary; FastAPI lifespan now raises
   normal startup exceptions instead of calling `sys.exit()`.

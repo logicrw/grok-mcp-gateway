@@ -15,6 +15,7 @@ TOOL_VERSION = "0.1.0"
 BACKEND = "xai_x_search_generated"
 SOURCE_LIMIT = "Generated extraction via xAI x_search. Not official X API timeline."
 HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+POST_QUERY_MAX_CHARS = 2000
 POSTS_ARGUMENT_KEYS = {
     "handles",
     "query",
@@ -121,7 +122,12 @@ def posts_tool_definition(default_model: str) -> Dict[str, Any]:
                     "items": {"type": "string", "pattern": "^@?[A-Za-z0-9_]{1,15}$"},
                     "description": "Optional author handles, with or without @. Supports up to 10 handles.",
                 },
-                "query": {"type": "string", "minLength": 1, "maxLength": 500, "description": "Optional topic or keyword filter."},
+                "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": POST_QUERY_MAX_CHARS,
+                    "description": "Optional topic or keyword filter.",
+                },
                 "time_range": {
                     "type": "string",
                     "description": "Optional natural-language time window. Defaults to the last 30 days.",
@@ -193,7 +199,7 @@ def clean_handle_list(arguments: Dict[str, Any], key: str) -> Optional[list[str]
         if not handle:
             continue
         if not HANDLE_RE.fullmatch(handle):
-            raise ValueError(f"{key} entries must be X handles, for example '0xlogicrw'")
+            raise ValueError(f"{key} entries must be X handles, for example 'logicrw'")
         cleaned.append(handle)
     if len(cleaned) > 10:
         raise ValueError(f"{key} supports at most 10 handles")
@@ -208,7 +214,7 @@ def clean_single_handle(arguments: Dict[str, Any], key: str) -> str:
     if not handle:
         raise ValueError(f"{key} is required")
     if not HANDLE_RE.fullmatch(handle):
-        raise ValueError(f"{key} must be a single X handle, for example '0xlogicrw'")
+        raise ValueError(f"{key} must be a single X handle, for example 'logicrw'")
     return handle
 
 
@@ -284,8 +290,8 @@ def _clean_query(arguments: Dict[str, Any]) -> Optional[str]:
     if not isinstance(value, str):
         raise ValueError("query must be a string")
     cleaned = value.strip()
-    if len(cleaned) > 500:
-        raise ValueError("query must be at most 500 characters")
+    if len(cleaned) > POST_QUERY_MAX_CHARS:
+        raise ValueError(f"query must be at most {POST_QUERY_MAX_CHARS} characters")
     return cleaned or None
 
 

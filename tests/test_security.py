@@ -465,7 +465,7 @@ def test_health_reports_expired_token_state(monkeypatch):
     assert "token expired" in response.json()["detail"]
 
 
-def test_http_mcp_lists_x_search_tool(monkeypatch):
+def test_http_mcp_lists_x_retrieve_tool(monkeypatch):
     async def fake_preflight_startup():
         return None
 
@@ -478,7 +478,7 @@ def test_http_mcp_lists_x_search_tool(monkeypatch):
         )
 
     assert response.status_code == 200
-    assert response.json()["result"]["tools"][0]["name"] == "x_search"
+    assert response.json()["result"]["tools"][0]["name"] == "x_retrieve"
 
 
 def test_http_mcp_notifications_return_accepted(monkeypatch):

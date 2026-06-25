@@ -49,7 +49,7 @@ Create `~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist` and adjust pat
         <key>PROXY_PORT</key>
         <string>9996</string>
         <key>GROK_GATEWAY_MCP_TOOL_ALLOWLIST</key>
-        <string>x_search,x_posts,x_latest_posts</string>
+        <string>x_retrieve</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

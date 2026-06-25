@@ -51,6 +51,8 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not isinstance(params, dict):
             return _error(request_id, -32602, "invalid params")
         tool_name = params.get("name")
+        if isinstance(tool_name, str) and mcp_x_search.tool_removed(tool_name):
+            return _error(request_id, -32602, f"tool removed in vNext: {tool_name}. Use x_retrieve.")
         if not isinstance(tool_name, str) or tool_name not in mcp_x_search.TOOL_NAMES:
             return _error(request_id, -32602, "unknown tool")
         if not mcp_x_search.tool_enabled(tool_name):

@@ -227,6 +227,6 @@ def test_service_templates_include_required_environment():
     assert "Environment=PATH=__SERVICE_PATH__" in service
     assert "Environment=PROXY_HOST=127.0.0.1" in service
     assert "Environment=PROXY_PORT=9996" in service
-    assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST=x_search,x_posts,x_latest_posts" in service
+    assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST=x_retrieve" in service
     assert "<key>EnvironmentVariables</key>" in examples
     assert "GROK_GATEWAY_MCP_TOOL_ALLOWLIST" in examples
