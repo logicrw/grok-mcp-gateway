@@ -283,7 +283,7 @@ through MCP.
 ```json
 {
   "mcpServers": {
-    "x_retrieve": {
+    "grok_mcp_gateway": {
       "url": "http://127.0.0.1:9996/mcp"
     }
   }
@@ -682,7 +682,7 @@ Configure the MCP server separately:
 ```json
 {
   "mcpServers": {
-    "x_retrieve": {
+    "grok_mcp_gateway": {
       "url": "http://127.0.0.1:9996/mcp"
     }
   }
@@ -699,10 +699,17 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_retrieve
 Common causes:
 
 - `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` does not include `x_retrieve`.
+- The MCP client config disables `x_retrieve` with a `disabledTools` entry while
+  a stale schema cache still shows `grok_mcp_gateway/x_retrieve.json`.
 - xAI OAuth needs Hermes re-authentication.
 - The account does not have access to the requested model or X Search feature.
 - `allowed_x_handles` is too restrictive.
 - The client is calling `/mcp` with GET instead of POST.
+
+If the client says `tool x_retrieve is not enabled for server
+grok_mcp_gateway`, first check the client-side MCP config and remove
+`x_retrieve` from `disabledTools`. That error can be raised before the request
+reaches this gateway.
 
 ### Base URL confusion
 
