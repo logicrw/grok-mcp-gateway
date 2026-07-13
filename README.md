@@ -654,7 +654,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `LOG_LEVEL` | `INFO` | Python app log level. |
 | `TOKEN_REFRESH_WINDOW` | `300` | Seconds before expiry to refresh in the background. |
 | `HERMES_POLL_INTERVAL` | `60` | Seconds between Hermes auth file checks. |
-| `UPSTREAM_RETRY_ATTEMPTS` | `2` | Retry attempts for idempotent upstream requests and transient connection errors. |
+| `UPSTREAM_RETRY_ATTEMPTS` | `2` | Total attempts, including the first, for retry-safe `GET`, `HEAD`, `OPTIONS`, and `TRACE` upstream requests after transient connection errors or retryable status codes. |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | Base delay between upstream retries. |
 | `GROK_PROXY_RETRIEVE_MODEL` | unset | Preferred stable xAI model used by MCP `x_retrieve`. Falls back to `GROK_PROXY_MCP_MODEL` then `grok-4.5`. |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.5` | Backward-compatible default stable model for MCP `x_retrieve`. |
@@ -776,8 +776,18 @@ Use `http://127.0.0.1:9996` when the client appends `/v1` itself.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+python -m pip install --upgrade pip==26.1.2
+python -m pip install --require-hashes -r requirements-dev.lock
 pytest -q
+```
+
+`requirements.txt` and `requirements-dev.txt` are the direct dependency inputs.
+Refresh their committed cross-platform hash locks after an intentional dependency
+change:
+
+```bash
+uv pip compile requirements.txt --universal --python-version 3.10 --generate-hashes --output-file requirements.lock
+uv pip compile requirements-dev.txt --universal --python-version 3.10 --generate-hashes --output-file requirements-dev.lock
 ```
 
 Useful checks before publishing:

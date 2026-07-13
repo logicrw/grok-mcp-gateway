@@ -20,6 +20,14 @@ import main
 import token_manager
 
 
+def test_metric_labels_are_escaped_and_bounded():
+    label = main._metric_label(('\\"' * 100) + "\n")
+
+    assert len(label) <= 80
+    assert not label.endswith("\\")
+    assert "\n" not in label
+
+
 def _unsigned_jwt(payload):
     header = {"alg": "none", "typ": "JWT"}
 

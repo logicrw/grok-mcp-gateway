@@ -12,7 +12,8 @@ _x_search_calls: defaultdict[tuple[str, str], int] = defaultdict(int)
 
 
 def _label(value: object) -> str:
-    return str(value or "unknown")[:80].replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    escaped = str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    return escaped[:80].rstrip("\\")
 
 
 def record_retrieval_status(status: str) -> None:

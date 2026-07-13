@@ -620,7 +620,7 @@ sudo systemctl enable --now grok-mcp-gateway
 | `LOG_LEVEL` | `INFO` | Python app 日志级别。 |
 | `TOKEN_REFRESH_WINDOW` | `300` | token 到期前多少秒触发后台刷新。 |
 | `HERMES_POLL_INTERVAL` | `60` | Hermes auth 文件轮询间隔。 |
-| `UPSTREAM_RETRY_ATTEMPTS` | `2` | 幂等 upstream 请求和瞬时连接错误的重试次数。 |
+| `UPSTREAM_RETRY_ATTEMPTS` | `2` | 可安全重试的 `GET`、`HEAD`、`OPTIONS`、`TRACE` upstream 请求在瞬时连接错误或可重试状态码下的总尝试次数，包含第一次请求。 |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | upstream 重试基础间隔。 |
 | `GROK_PROXY_RETRIEVE_MODEL` | 未设置 | MCP `x_retrieve` 优先使用的 stable xAI 模型；未设置时回退到 `GROK_PROXY_MCP_MODEL`，再回退到 `grok-4.5`。 |
 | `GROK_PROXY_MCP_MODEL` | `grok-4.5` | 兼容旧配置的 MCP stable 模型默认值。 |
@@ -733,8 +733,17 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_retrieve
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+python -m pip install --upgrade pip==26.1.2
+python -m pip install --require-hashes -r requirements-dev.lock
 pytest -q
+```
+
+`requirements.txt` 和 `requirements-dev.txt` 是直接依赖输入。只有在有意升级依赖后，
+才更新并提交对应的跨平台 hash lock：
+
+```bash
+uv pip compile requirements.txt --universal --python-version 3.10 --generate-hashes --output-file requirements.lock
+uv pip compile requirements-dev.txt --universal --python-version 3.10 --generate-hashes --output-file requirements-dev.lock
 ```
 
 发布前常用检查：

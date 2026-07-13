@@ -76,7 +76,8 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _metric_label(value: object) -> str:
-    return str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    escaped = str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    return escaped[:80].rstrip("\\")
 
 
 def _tracked_models() -> dict[str, str]:
@@ -174,7 +175,7 @@ def _prepare_forward_headers(incoming_headers: Mapping[str, str], auth_headers: 
         forwarded[key] = value
 
     forwarded.update(auth_headers)
-    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.3")
+    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.1.0")
     return forwarded
 
 
