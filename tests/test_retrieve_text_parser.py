@@ -107,6 +107,15 @@ def test_raw_parser_accepts_default_https_port():
     assert posts[0]["url"] == url
 
 
+def test_raw_parser_preserves_mixed_case_https_scheme():
+    status_id = "2071385784154759468"
+    url = f"HTTPS://X.COM/xai/status/{status_id}"
+
+    posts = parse_raw_posts_from_text(f"Main Post: {url}", {"count": 3})
+
+    assert posts[0]["url"] == url
+
+
 def test_raw_parser_accepts_standard_url_wrappers():
     status_id = "2071385784154759468"
     url = f"https://x.com/xai/status/{status_id}"
@@ -116,6 +125,9 @@ def test_raw_parser_accepts_standard_url_wrappers():
         f"'{url}'",
         f"`{url}`",
         f"[source]({url})",
+        f"[X post]({url})",
+        f'[source]({url} "X post")',
+        f"([source]({url}))",
         f"URL={url}",
         f"URL：{url}",
     ]

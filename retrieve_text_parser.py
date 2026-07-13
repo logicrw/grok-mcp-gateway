@@ -7,6 +7,9 @@ from urllib.parse import urlparse
 STATUS_URL_TOKEN_RE = re.compile(
     r"\S+",
 )
+MARKDOWN_LINK_RE = re.compile(
+    r"\[[^\]\n]*\]\(\s*(?P<url>\S+?)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
+)
 URL_LEADING_PUNCTUATION = "([{<\"'`“‘（【《「『"
 URL_TRAILING_PUNCTUATION = ".,;:!?)]}>\"'`，。；：！？、…）》】」』”’"
 URL_TEXT_PREFIXES = (
@@ -124,7 +127,16 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
 
 def _status_urls(text: str) -> list[tuple[int, str, str]]:
     matches: list[tuple[int, str, str]] = []
+    markdown_spans: list[tuple[int, int]] = []
+    for markdown_match in MARKDOWN_LINK_RE.finditer(text):
+        markdown_spans.append(markdown_match.span())
+        url = _clean_url_token(markdown_match.group("url"))
+        status_id = status_id_from_url(url)
+        if status_id:
+            matches.append((markdown_match.start("url"), url, status_id))
     for match in STATUS_URL_TOKEN_RE.finditer(text):
+        if any(start < match.end() and match.start() < end for start, end in markdown_spans):
+            continue
         url = _clean_url_token(match.group(0))
         status_id = status_id_from_url(url)
         if status_id:
@@ -133,8 +145,7 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
 
 
 def _clean_url_token(raw_token: str) -> str:
-    token = _markdown_link_url(raw_token) or raw_token
-    token = token.lstrip(URL_LEADING_PUNCTUATION)
+    token = raw_token.lstrip(URL_LEADING_PUNCTUATION)
     lowered = token.lower()
     for prefix in URL_TEXT_PREFIXES:
         if lowered.startswith(prefix):
@@ -144,19 +155,6 @@ def _clean_url_token(raw_token: str) -> str:
     if delimiter_positions:
         token = token[: min(delimiter_positions)]
     return token.rstrip(URL_TRAILING_PUNCTUATION)
-
-
-def _markdown_link_url(raw_token: str) -> str:
-    if not raw_token.startswith("[") or "](" not in raw_token:
-        return ""
-    separator = raw_token.find("](")
-    closing = raw_token.rfind(")")
-    if closing <= separator + 2:
-        return ""
-    suffix = raw_token[closing + 1 :]
-    if suffix and any(character not in URL_TRAILING_PUNCTUATION for character in suffix):
-        return ""
-    return raw_token[separator + 2 : closing]
 
 
 def _section_for_status(text: str, status_id: str) -> str:
@@ -171,7 +169,7 @@ def _section_for_status(text: str, status_id: str) -> str:
 def _url_for_status(text: str, status_id: str) -> str:
     for _position, url, candidate_status_id in _status_urls(text):
         if candidate_status_id == status_id:
-            return url if url.startswith("http") else f"https://{url}"
+            return url if url.lower().startswith(("http://", "https://")) else f"https://{url}"
     return f"https://x.com/i/status/{status_id}"
 
 
