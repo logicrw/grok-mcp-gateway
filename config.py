@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Optional
 
 
-def _env_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
+def _env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+) -> int:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         value = default
@@ -18,10 +24,18 @@ def _env_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
             raise RuntimeError(f"{name} must be an integer") from exc
     if minimum is not None:
         value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
     return value
 
 
-def _env_float(name: str, default: float, *, minimum: Optional[float] = None) -> float:
+def _env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> float:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         value = default
@@ -32,6 +46,8 @@ def _env_float(name: str, default: float, *, minimum: Optional[float] = None) ->
             raise RuntimeError(f"{name} must be a number") from exc
     if minimum is not None:
         value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
     return value
 
 
@@ -86,3 +102,17 @@ GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
 ]
 GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)
 GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS: bool = _env_bool("GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS", False)
+
+GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS", 120.0, minimum=10.0, maximum=300.0
+)
+GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS: float = min(
+    GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS,
+    _env_float("GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS", 60.0, minimum=5.0, maximum=120.0),
+)
+GROK_PROXY_RETRIEVE_MAX_TARGETS: int = _env_int(
+    "GROK_PROXY_RETRIEVE_MAX_TARGETS", 5, minimum=1, maximum=10
+)
+GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY: int = _env_int(
+    "GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY", 3, minimum=1, maximum=10
+)

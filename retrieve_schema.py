@@ -9,6 +9,7 @@ SCHEMA_VERSION = "x_retrieve.v1"
 BACKEND = "xai_x_search_orchestrated"
 SOURCE_LIMIT = "Generated retrieval via xAI x_search. Not official X API timeline."
 RETRIEVE_QUERY_MAX_CHARS = 2000
+RETRIEVE_MODEL_MAX_CHARS = 128
 RAW_MODEL = (
     os.getenv("GROK_PROXY_RETRIEVE_RAW_MODEL")
     or os.getenv("GROK_PROXY_MCP_RAW_MODEL")
@@ -44,6 +45,7 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
         "description": (
             "Default X retrieval tool for semantic X research, structured post retrieval, source discovery, "
             "reaction tracking, and latest-by-handle requests. Use this for normal X/Twitter retrieval. "
+            "Pass explicit X status URLs or 15-20 digit status IDs in query to retrieve target posts. "
             f"Current local date: {today}. For screenshots, pass OCR-derived text in query; do not pass images."
         ),
         "inputSchema": {
@@ -52,7 +54,10 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
                 "query": {
                     "type": "string",
                     "maxLength": RETRIEVE_QUERY_MAX_CHARS,
-                    "description": "Natural-language topic, claim, source clue, OCR-derived text, or research request.",
+                    "description": (
+                        "Natural-language topic, claim, source clue, OCR-derived text, research request, "
+                        "or explicit X status URL/status ID target."
+                    ),
                 },
                 "intent": {"type": "string", "enum": sorted(INTENTS), "description": "Optional routing hint. Defaults to auto."},
                 "handles": {
@@ -105,7 +110,12 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
                     "additionalProperties": False,
                 },
                 "model_policy": {"type": "string", "enum": ["auto", "stable_only", "raw_expanded"]},
-                "model": {"type": "string", "description": f"Optional stable xAI model. Defaults to {default_model}."},
+                "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": RETRIEVE_MODEL_MAX_CHARS,
+                    "description": f"Optional stable xAI model. Defaults to {default_model}.",
+                },
             },
             "additionalProperties": False,
         },
@@ -125,6 +135,7 @@ def _retrieve_output_schema() -> Dict[str, Any]:
             "mode",
             "request",
             "retrieval_stages",
+            "retrieval_status",
             "models_used",
             "warnings",
             "filter_reliability",
@@ -144,8 +155,18 @@ def _retrieve_output_schema() -> Dict[str, Any]:
             "mode": {"enum": sorted(MODES)},
             "request": {"type": "object"},
             "retrieval_stages": {"type": "array"},
+            "retrieval_status": {"enum": ["degraded", "empty", "error", "no_match", "ok"]},
             "models_used": {"type": "array", "items": {"type": "string"}},
             "warnings": {"type": "array", "items": {"type": "string"}},
+            "target_match": {
+                "type": "object",
+                "properties": {
+                    "requested": {"type": "array", "items": {"type": "string"}},
+                    "matched": {"type": "array", "items": {"type": "string"}},
+                    "missing": {"type": "array", "items": {"type": "string"}},
+                },
+                "additionalProperties": False,
+            },
             "filter_reliability": {"type": "object"},
             "sources": {"type": "array"},
             "source_extraction_status": {"enum": ["not_available", "extracted_unmapped", "citation_backed"]},

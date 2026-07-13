@@ -6,13 +6,14 @@ import asyncio
 import os
 import time
 from collections import defaultdict
-from datetime import date
 from typing import Any, Dict, Optional
 
 import config
 import mcp_posts
 import mcp_retrieve
 import xai_responses
+from retrieve_policy import model_supports_reasoning_effort
+from retrieve_schema import RETRIEVE_MODEL_MAX_CHARS, retrieve_tool_definition
 
 X_SEARCH_TOOL_NAME = "x_search"
 POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
@@ -20,7 +21,7 @@ LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
 RETRIEVE_TOOL_NAME = mcp_retrieve.RETRIEVE_TOOL_NAME
 TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_VERSION = "0.1.0"
-DEFAULT_MODEL = (os.getenv("GROK_PROXY_RETRIEVE_MODEL") or os.getenv("GROK_PROXY_MCP_MODEL") or "grok-4.3").strip() or "grok-4.3"
+DEFAULT_MODEL = (os.getenv("GROK_PROXY_RETRIEVE_MODEL") or os.getenv("GROK_PROXY_MCP_MODEL") or "grok-4.5").strip() or "grok-4.5"
 TOOL_NAMES = {RETRIEVE_TOOL_NAME}
 REMOVED_TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
 X_SEARCH_INPUT_MAX_CHARS = 8000
@@ -34,6 +35,7 @@ X_SEARCH_ARGUMENT_KEYS = {
     "enable_video_understanding",
     "model",
     "raw",
+    "_reasoning_effort",
 }
 _x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
 _x_search_counts: defaultdict[str, int] = defaultdict(int)
@@ -54,7 +56,7 @@ _tool_enabled = tool_enabled
 
 
 def tool_definitions() -> list[Dict[str, Any]]:
-    definitions = [mcp_retrieve.retrieve_tool_definition(DEFAULT_MODEL)]
+    definitions = [retrieve_tool_definition(DEFAULT_MODEL)]
     return [definition for definition in definitions if tool_enabled(str(definition["name"]))]
 
 
@@ -146,12 +148,18 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"query must be at most {X_SEARCH_INPUT_MAX_CHARS} characters")
 
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    return {
+    if len(model) > RETRIEVE_MODEL_MAX_CHARS:
+        raise ValueError(f"model must be at most {RETRIEVE_MODEL_MAX_CHARS} characters")
+    payload: Dict[str, Any] = {
         "model": model,
         "input": query,
         "tools": [_build_x_search_tool(arguments)],
         "temperature": 0,
     }
+    reasoning_effort = arguments.get("_reasoning_effort")
+    if reasoning_effort in {"low", "medium", "high"} and model_supports_reasoning_effort(model):
+        payload["reasoning"] = {"effort": reasoning_effort}
+    return payload
 
 
 async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
@@ -163,6 +171,16 @@ def tool_removed(tool_name: str) -> bool:
     return tool_name in REMOVED_TOOL_NAMES
 
 
+def tool_error_result(tool_name: str, arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
+    if tool_name == RETRIEVE_TOOL_NAME:
+        retrieve_arguments = dict(arguments)
+        requested_model = retrieve_arguments.get("model")
+        model = requested_model.strip() if isinstance(requested_model, str) else ""
+        retrieve_arguments["model"] = (model or DEFAULT_MODEL)[:RETRIEVE_MODEL_MAX_CHARS]
+        return mcp_retrieve.error_result(retrieve_arguments, error_text)
+    return {"content": [{"type": "text", "text": f"{tool_name} failed: {error_text}"}], "isError": True}
+
+
 async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     start = time.monotonic()
     global _x_search_active
@@ -170,7 +188,13 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
     try:
         if tool_name != RETRIEVE_TOOL_NAME:
             raise ValueError(f"tool removed in vNext: {tool_name}. Use x_retrieve.")
-        result = await mcp_retrieve.call_retrieve(arguments, search=_call_x_search_result)
+        retrieve_arguments = dict(arguments)
+        model_value = retrieve_arguments.get("model")
+        if model_value is not None and not isinstance(model_value, str):
+            raise ValueError("model must be a string")
+        requested_model = model_value.strip() if isinstance(model_value, str) else ""
+        retrieve_arguments["model"] = requested_model or DEFAULT_MODEL
+        result = await mcp_retrieve.call_retrieve(retrieve_arguments, search=_call_x_search_result)
         _record_x_search("success", time.monotonic() - start)
         return result
     except Exception:

@@ -19,6 +19,12 @@ proxy.log
 server.log
 *.pid
 
+# Local research and agent work products
+work/
+outputs/
+.debug-journal.md
+.agpair/
+
 # Local OAuth/token state and secrets
 .env
 .env.*

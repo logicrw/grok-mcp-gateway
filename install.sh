@@ -133,13 +133,14 @@ fi
 source "$VENV_DIR/bin/activate"
 
 print_step "Upgrading pip..."
-pip install --quiet --upgrade pip
+"$VENV_DIR/bin/python" -m pip install --quiet --upgrade pip==26.1.2
 
 print_step "Installing dependencies..."
-if [[ -f "requirements.txt" ]]; then
-    pip install --quiet -r requirements.txt
+if [[ -f "requirements.lock" ]]; then
+    "$VENV_DIR/bin/python" -m pip install --quiet --require-hashes -r requirements.lock
 else
-    echo "WARNING: requirements.txt not found."
+    echo "ERROR: requirements.lock not found." >&2
+    exit 1
 fi
 
 # Import credentials in headless mode

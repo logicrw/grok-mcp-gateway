@@ -20,6 +20,14 @@ import main
 import token_manager
 
 
+def test_metric_labels_are_escaped_and_bounded():
+    label = main._metric_label(('\\"' * 100) + "\n")
+
+    assert len(label) <= 80
+    assert not label.endswith("\\")
+    assert "\n" not in label
+
+
 def _unsigned_jwt(payload):
     header = {"alg": "none", "typ": "JWT"}
 
@@ -119,6 +127,11 @@ def test_sanitize_text_redacts_common_secret_shapes():
     assert "eyJhbGci" not in sanitized
     assert "user@example.com" not in sanitized
     assert "session-secret" not in sanitized
+
+
+def test_sanitize_text_keeps_exception_type_when_message_is_empty():
+    assert sanitize_text(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert sanitize_text(httpx.ReadTimeout("   ")) == "ReadTimeout"
 
 
 def test_find_port_fails_fast_when_autoscan_disabled():
@@ -463,6 +476,75 @@ def test_health_reports_expired_token_state(monkeypatch):
     assert response.status_code == 503
     assert response.json()["status"] == "error"
     assert "token expired" in response.json()["detail"]
+
+
+def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch):
+    async def fake_preflight_startup():
+        return None
+
+    async def fake_read_local_state():
+        raise RuntimeError("missing oauth state")
+
+    monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
+    monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+
+    with TestClient(main.app) as client:
+        response = client.get("/health")
+
+    payload = response.json()
+    assert response.status_code == 503
+    assert payload["status"] == "error"
+    assert payload["mcp"]["enabled_tools"] == ["x_retrieve"]
+
+
+def test_health_reports_mcp_tool_status(monkeypatch):
+    async def fake_read_local_state():
+        return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
+
+    monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+
+    with TestClient(main.app) as client:
+        response = client.get("/health")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["mcp"]["tool_allowlist"] == ["x_retrieve"]
+    assert payload["mcp"]["enabled_tools"] == ["x_retrieve"]
+    assert payload["mcp"]["removed_tools"] == ["x_search", "x_latest_posts", "x_posts"]
+    assert payload["mcp"]["models"]["stable"] == {"id": "grok-4.5", "listing": "unknown"}
+    assert payload["mcp"]["models"]["raw"]["listing"] == "unknown"
+
+
+def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeypatch):
+    async def fake_read_local_state():
+        return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
+
+    async def fake_auth_headers():
+        return {"Authorization": "Bearer redacted"}
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, request=request, json={"data": [{"id": "grok-4.5"}]})
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
+    monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
+    monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_auth_headers)
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "httpx_client", FakeClient())
+        response = client.get("/health?deep=1")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["mcp"]["models"]["stable"]["listing"] == "listed"
+    assert payload["mcp"]["models"]["raw"]["listing"] == "not_listed"
+    assert "entitlement" not in payload["mcp"]["models"]["raw"]
 
 
 def test_http_mcp_lists_x_retrieve_tool(monkeypatch):

@@ -64,10 +64,7 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             result = await mcp_x_search.call_tool(tool_name, arguments)
             return _result(request_id, result)
         except Exception as exc:
-            return _result(
-                request_id,
-                {"content": [{"type": "text", "text": f"{tool_name} failed: {sanitize_text(exc)}"}], "isError": True},
-            )
+            return _result(request_id, mcp_x_search.tool_error_result(tool_name, arguments, sanitize_text(exc)))
 
     return _error(request_id, -32601, f"method not found: {method}")
 

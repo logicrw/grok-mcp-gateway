@@ -38,6 +38,12 @@ class ResponsesResult:
         return json.dumps(self.compact, ensure_ascii=False, separators=(",", ":"))
 
 
+class ResponsesAPIError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(upstream_error_message("xAI Responses", status_code))
+
+
 def _extract_output_text(response: Dict[str, Any]) -> str:
     direct = response.get("output_text")
     if isinstance(direct, str) and direct.strip():
@@ -138,6 +144,27 @@ def _extract_degraded(response: Dict[str, Any]) -> bool:
     return False
 
 
+def parse_usage_metrics(usage: Any) -> tuple[int, int]:
+    if not isinstance(usage, dict):
+        return 0, 0
+    output_details = usage.get("output_tokens_details")
+    tool_details = usage.get("server_side_tool_usage_details")
+    reasoning_tokens = (
+        output_details.get("reasoning_tokens")
+        if isinstance(output_details, dict) and "reasoning_tokens" in output_details
+        else usage.get("reasoning_tokens", 0)
+    )
+    x_search_calls = (
+        tool_details.get("x_search_calls")
+        if isinstance(tool_details, dict) and "x_search_calls" in tool_details
+        else usage.get("x_search_calls", 0)
+    )
+    return (
+        reasoning_tokens if isinstance(reasoning_tokens, int) else 0,
+        x_search_calls if isinstance(x_search_calls, int) else 0,
+    )
+
+
 async def get_client() -> httpx.AsyncClient:
     global _client, _client_loop
     current_loop = asyncio.get_running_loop()
@@ -190,7 +217,7 @@ async def post(payload: Dict[str, Any]) -> ResponsesResult:
     if response.status_code >= 400:
         if config.GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS:
             logger.debug("xAI Responses upstream error body: %s", sanitize_text(response.text))
-        raise RuntimeError(upstream_error_message("xAI Responses", response.status_code))
+        raise ResponsesAPIError(response.status_code)
     try:
         data = response.json()
     except ValueError as exc:

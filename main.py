@@ -76,7 +76,60 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _metric_label(value: object) -> str:
-    return str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    escaped = str(value or "unknown").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "_")
+    return escaped[:80].rstrip("\\")
+
+
+def _tracked_models() -> dict[str, str]:
+    from retrieve_schema import RAW_MODEL
+
+    return {"stable": mcp_x_search.DEFAULT_MODEL, "raw": RAW_MODEL}
+
+
+def _mcp_health_status() -> dict:
+    models = _tracked_models()
+    return {
+        "tool_allowlist": list(config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST),
+        "enabled_tools": [tool["name"] for tool in mcp_x_search.tool_definitions()],
+        "removed_tools": [
+            mcp_x_search.X_SEARCH_TOOL_NAME,
+            mcp_x_search.LATEST_POSTS_TOOL_NAME,
+            mcp_x_search.POSTS_TOOL_NAME,
+        ],
+        "models": {
+            role: {"id": model_id, "listing": "unknown"}
+            for role, model_id in models.items()
+        },
+    }
+
+
+async def _deep_model_listings() -> tuple[Optional[int], dict[str, str]]:
+    tracked = _tracked_models()
+    listings = {role: "unknown" for role in tracked}
+    try:
+        auth_headers = await token_manager.get_auth_headers()
+        upstream = await httpx_client.get(
+            f"{token_manager.XAI_API_BASE}/v1/models",
+            headers=auth_headers,
+            timeout=10.0,
+        )
+        if upstream.status_code != 200:
+            return upstream.status_code, listings
+        payload = upstream.json()
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None, listings
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return upstream.status_code, listings
+    listed_ids = {
+        str(item.get("id"))
+        for item in data
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    return upstream.status_code, {
+        role: "listed" if model_id in listed_ids else "not_listed"
+        for role, model_id in tracked.items()
+    }
 
 
 def _validate_startup_security(host: str, proxy_api_key: Optional[str]) -> None:
@@ -122,7 +175,7 @@ def _prepare_forward_headers(incoming_headers: Mapping[str, str], auth_headers: 
         forwarded[key] = value
 
     forwarded.update(auth_headers)
-    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.3")
+    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.1.0")
     return forwarded
 
 
@@ -500,6 +553,7 @@ async def health(response: Response, deep: bool = False) -> dict:
             "token_expires_at": exp_str,
             "token_endpoint": state.get("token_endpoint"),
             "oauth_refresh": refresh,
+            "mcp": _mcp_health_status(),
         }
         if exp and exp <= time.time():
             response.status_code = 503
@@ -507,35 +561,29 @@ async def health(response: Response, deep: bool = False) -> dict:
             result["detail"] = "token expired; refresh or re-authenticate xAI OAuth"
         if deep:
             t0 = time.time()
-            try:
-                auth_headers = await token_manager.get_auth_headers()
-                r = await httpx_client.get(
-                    f"{token_manager.XAI_API_BASE}/v1/models",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if r.status_code == 200:
-                    result["deep_check"] = {
-                        "status": "ok",
-                        "latency_ms": round((time.time() - t0) * 1000, 2),
-                        "upstream_status": r.status_code,
-                    }
-                else:
-                    response.status_code = 503
-                    result["status"] = "error"
-                    result["deep_check"] = {
-                        "status": "fail",
-                        "latency_ms": round((time.time() - t0) * 1000, 2),
-                        "upstream_status": r.status_code,
-                    }
-            except Exception:
+            upstream_status, listings = await _deep_model_listings()
+            for role, listing in listings.items():
+                result["mcp"]["models"][role]["listing"] = listing
+            if upstream_status != 200:
                 response.status_code = 503
                 result["status"] = "error"
-                result["deep_check"] = {"status": "fail", "error": "upstream deep health check failed"}
+                result["deep_check"] = {
+                    "status": "fail",
+                    "latency_ms": round((time.time() - t0) * 1000, 2),
+                    "upstream_status": upstream_status,
+                    "error": "upstream model listing unavailable",
+                }
+            else:
+                result["deep_check"] = {
+                    "status": "ok",
+                    "latency_ms": round((time.time() - t0) * 1000, 2),
+                    "upstream_status": upstream_status,
+                    "models": listings,
+                }
         return result
     except Exception:
         response.status_code = 503
-        return {"status": "error", "detail": "token state unavailable"}
+        return {"status": "error", "detail": "token state unavailable", "mcp": _mcp_health_status()}
 
 
 @app.get("/metrics")

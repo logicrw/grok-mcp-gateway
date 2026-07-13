@@ -44,9 +44,9 @@ that AI clients can use in two ways:
 
 Important boundary: `x_retrieve` is a structured best-effort retrieval tool
 over xAI `x_search`. It is not an official X API timeline endpoint, does not
-provide official pagination, and does not guarantee exact metrics. Use the
-official X API or official X MCP server for API-grade timelines, posting,
-compliance, or bulk data access.
+provide official pagination, and does not guarantee exact metrics. Official X
+API tools, when needed, stay separate at the client layer; this gateway does
+not embed, proxy, or depend on an official X API provider.
 
 No X Developer API credentials are required for this gateway. It uses the
 Hermes/xAI OAuth session and xAI's `x_search` backend instead.
@@ -86,10 +86,10 @@ server for querying documentation. Grok MCP Gateway is narrower: it keeps the
 Hermes/xAI OAuth model gateway and exposes one focused MCP tool backed by xAI
 Responses API search.
 
-Run the official X MCP server alongside this gateway if you need broader X API
-actions such as account or posting workflows. Keep this gateway for local Grok
-model access and OAuth-backed X Search that non-Grok agents can call through
-their MCP tool layer.
+If a client needs broader X API actions such as account or posting workflows,
+configure an official X tool independently in that client. It remains outside
+this gateway. Keep this project focused on local Grok model access and
+OAuth-backed X Search that non-Grok agents can call through their MCP layer.
 
 ### Relationship to `xurl`
 
@@ -98,11 +98,10 @@ X API CLI with a Hermes skill. That route is stronger when you have an X
 Developer app and need API-grade actions such as posting, bookmarks, timelines,
 media upload, likes, or list management.
 
-Grok MCP Gateway intentionally keeps a different default: no X Developer API
+Grok MCP Gateway intentionally takes a different path: no X Developer API
 credentials are required. It uses Hermes/xAI OAuth and xAI `x_search` for local
-agent search. If this project adds `xurl` support later, it should be an
-optional extension with write actions disabled by default, not a replacement for
-the current OAuth-backed search gateway.
+agent search. `xurl` remains a separate client-side tool and is not a planned
+provider inside this repository.
 
 ## What This Is / Is Not
 
@@ -117,6 +116,7 @@ This project is:
 This project is not:
 
 - a general MCP router, MCP marketplace, or remote-tool aggregator;
+- an official X API provider, adapter, or proxy;
 - a replacement for the official X API MCP server when you need posting,
   account management, official timelines, pagination, metrics, compliance
   archives, or broader X API actions;
@@ -136,6 +136,13 @@ Preview means:
 - `x_retrieve` is generated retrieval, not an official X timeline;
 - MCP compatibility is verified only for clients listed in the matrix below;
 - tool schemas may still change before a stable release.
+
+## Architecture and Evaluation
+
+- [Current X retrieval architecture](docs/retrieval-architecture.md): routing,
+  deadlines, trust boundaries, local upgrade checks, and project non-goals.
+- [Model evaluation baseline](docs/model-evaluation-2026-06-25.md): retained
+  de-identified cases and Grok 4.5 live validation.
 
 ## Core Features
 
@@ -177,7 +184,7 @@ and Prometheus metrics.
 
 ### 1. Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - Hermes Agent installed
 - Hermes Agent already authorized with xAI Grok OAuth
 - An xAI/X subscription or entitlement that allows the requested Grok/X Search
@@ -231,7 +238,7 @@ curl -sS http://127.0.0.1:9996/health?deep=1
 curl -sS http://127.0.0.1:9996/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "grok-4.3",
+    "model": "grok-4.5",
     "messages": [{"role": "user", "content": "Reply with one short sentence."}]
   }'
 ```
@@ -297,9 +304,9 @@ you want Alma to use Grok as a model and expose X Search as a tool.
 
 ```yaml
 model_list:
-  - model_name: grok-4.3
+  - model_name: grok-4.5
     litellm_params:
-      model: openai/grok-4.3
+      model: openai/grok-4.5
       api_base: http://127.0.0.1:9996/v1
       api_key: dummy
 ```
@@ -315,7 +322,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="grok-4.3",
+    model="grok-4.5",
     messages=[{"role": "user", "content": "Say hello in one sentence."}],
 )
 print(response.choices[0].message.content)
@@ -356,8 +363,8 @@ only need to choose one tool.
 | `include_reposts` | boolean | no | Whether reposts may be included when xAI can distinguish them. Defaults to `true`. |
 | `best_effort_filters` | object | no | Best-effort prompt filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. These are not official X API filters. |
 | `quality` | object | no | Optional quality gate: `min_items`, `require_status_url`, `require_original_text`, `allow_raw_expansion`. |
-| `model_policy` | string | no | `auto`, `stable_only`, or `raw_expanded`. Defaults to `auto`. |
-| `model` | string | no | xAI model for the stable MCP call. Defaults to `GROK_PROXY_RETRIEVE_MODEL`, then `GROK_PROXY_MCP_MODEL`, then `grok-4.3`. |
+| `model_policy` | string | no | `auto`, `stable_only`, or `raw_expanded`. Defaults to `auto`. This controls Composer/raw expansion only; exact-target oEmbed and stable fallback remain enabled. |
+| `model` | string | no | xAI model for the stable MCP call. Defaults to `GROK_PROXY_RETRIEVE_MODEL`, then `GROK_PROXY_MCP_MODEL`, then `grok-4.5`. |
 
 `x_retrieve` requires `query` or `handles`. Screenshots are handled upstream:
 ask your multimodal model to OCR or describe the image, then pass that text in
@@ -368,7 +375,26 @@ source-discovery and reaction-tracking requests with missing status URLs or
 missing original text. The raw stage uses `GROK_PROXY_RETRIEVE_RAW_MODEL`, then
 `GROK_PROXY_MCP_RAW_MODEL`, then `grok-composer-2.5-fast`. Composer/raw model
 availability may depend on account entitlement. Raw output is parsed and
-normalized before it reaches `items`; raw reasoning is not exposed directly.
+normalized before it reaches `items`; non-JSON text must contain a real status
+URL or labeled status ID, and raw reasoning is not exposed directly.
+
+When `query` contains explicit X status URLs or bare 15-20 digit status IDs,
+`x_retrieve` treats them as target posts and routes them through source
+discovery even if `handles` and `sort=latest` are also present. The response
+includes `request.target_status_ids` and, when applicable, `target_match` with
+requested, matched, and missing IDs. If an explicit target is still missing
+after the stable stage, the gateway first tries concurrent public
+`publish.twitter.com/oembed` lookups for those exact IDs. Any remaining targets
+are sent through one batched exact-status fallback using the active stable
+model (Grok 4.5 by default, or the resolved model override). Explicit targets
+never use Composer and never fall back one model call at a time.
+Latest-by-handle requests stay fast when the stable stage finds posts, but an
+empty latest-by-handle stable result is allowed to run one raw expansion pass.
+
+Grok 4.5 reasoning is route-aware: explicit targets, latest-by-handle, and
+structured-post requests use `low`; research, source discovery, and reaction
+tracking use `medium`; `verify_claim` uses `high`. The parameter is sent only
+to the documented `grok-4.5` model, not custom models or Composer.
 
 For exact author timelines, pagination, tweet fields, public metrics, or
 compliance-sensitive use, use official X API timeline endpoints or official X
@@ -384,8 +410,11 @@ MCP.
   "timeline_verified": false,
   "mode": "semantic_research",
   "source_limit": "Generated retrieval via xAI x_search. Not official X API timeline.",
+  "retrieval_status": "ok",
   "warnings": [],
-  "request": {},
+  "request": {
+    "target_status_ids": []
+  },
   "retrieval_stages": [],
   "models_used": [],
   "filter_reliability": {},
@@ -401,6 +430,23 @@ MCP.
   }
 }
 ```
+
+`retrieval_status` is machine-readable:
+
+- `ok`: usable items were returned and requested status targets, if any, were
+  matched.
+- `empty`: no usable items were returned for a request without explicit status
+  targets.
+- `no_match`: explicit status targets were requested, but none were found.
+- `degraded`: usable items exist, but raw expansion failed, warnings were
+  emitted, only some requested status targets were found, or a target status
+  URL was citation-backed but post text was not extracted. Public oEmbed
+  fallback failures are also reported as warnings.
+- `error`: validation or the required stable stage failed before a normal
+  retrieval result could be produced.
+
+When `request.target_status_ids` is not empty, the payload also includes
+`target_match.requested`, `target_match.matched`, and `target_match.missing`.
 
 List tools:
 
@@ -541,7 +587,7 @@ python scripts/export_xai_oauth.py > ~/xai-oauth.json
 Import it on the server:
 
 ```bash
-scp ~/xai-oauth.json user@example.com:/tmp/xai-oauth.json
+scp ~/xai-oauth.json logicrw@host.example:/tmp/xai-oauth.json
 python scripts/import_xai_oauth.py /tmp/xai-oauth.json
 rm -f /tmp/xai-oauth.json
 chmod 700 ~/.hermes
@@ -553,7 +599,7 @@ One-step remote refresh:
 
 ```bash
 python scripts/refresh_remote_xai_oauth.py \
-  --host user@example.com \
+  --host logicrw@host.example \
   --identity ~/.ssh/id_ed25519 \
   --print-reauth-command
 ```
@@ -615,14 +661,18 @@ sudo systemctl enable --now grok-mcp-gateway
 | `LOG_LEVEL` | `INFO` | Python app log level. |
 | `TOKEN_REFRESH_WINDOW` | `300` | Seconds before expiry to refresh in the background. |
 | `HERMES_POLL_INTERVAL` | `60` | Seconds between Hermes auth file checks. |
-| `UPSTREAM_RETRY_ATTEMPTS` | `2` | Retry attempts for idempotent upstream requests and transient connection errors. |
+| `UPSTREAM_RETRY_ATTEMPTS` | `2` | Total attempts, including the first, for retry-safe `GET`, `HEAD`, `OPTIONS`, and `TRACE` upstream requests after transient connection errors or retryable status codes. |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | Base delay between upstream retries. |
-| `GROK_PROXY_RETRIEVE_MODEL` | unset | Preferred stable xAI model used by MCP `x_retrieve`. Falls back to `GROK_PROXY_MCP_MODEL` then `grok-4.3`. |
-| `GROK_PROXY_MCP_MODEL` | `grok-4.3` | Backward-compatible default stable model for MCP `x_retrieve`. |
+| `GROK_PROXY_RETRIEVE_MODEL` | unset | Preferred stable xAI model used by MCP `x_retrieve`. Falls back to `GROK_PROXY_MCP_MODEL` then `grok-4.5`. |
+| `GROK_PROXY_MCP_MODEL` | `grok-4.5` | Backward-compatible default stable model for MCP `x_retrieve`. |
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | Raw expansion model for low-confidence/source/reaction retrieval. Falls back to `GROK_PROXY_MCP_RAW_MODEL` if set. |
 | `GROK_PROXY_MCP_RAW_MODEL` | unset | Backward-compatible raw expansion model override. |
 | `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_retrieve` | Comma-separated MCP tool allowlist. vNext defaults to the single public retrieval tool. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Max concurrent MCP retrieval calls using the xAI `x_search` backend. |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120` | Total wall-clock deadline for one `x_retrieve` call; clamped to 10-300 seconds. |
+| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | `60` | Generative-stage ceiling; clamped to 5-120 seconds and never greater than the total deadline. |
+| `GROK_PROXY_RETRIEVE_MAX_TARGETS` | `5` | Maximum explicit status targets per request; clamped to 1-10. |
+| `GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY` | `3` | Concurrent public oEmbed requests; clamped to 1-10. |
 | `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` | `false` | Log sanitized upstream error bodies for debugging. Tool results never return raw upstream bodies. |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | Inject xAI `x_search` into `/v1/responses` requests. |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | unset | Comma-separated handle allowlist for auto-injected X Search. |
@@ -652,6 +702,16 @@ raw expansion models to newer account-specific models.
 and `reauth_required`. When refresh fails, the gateway first checks Hermes
 `auth.json` for a newer usable xAI OAuth credential. If no newer credential is
 available, the gateway reports an OAuth error and requires reauthorization.
+`/health` also includes an `mcp` object with the current tool allowlist,
+enabled MCP tools, removed legacy tool names, and stable/raw model IDs.
+`/health?deep=1` marks each model `listed`, `not_listed`, or `unknown` from the
+upstream model list; it does not infer entitlement from absence. `/metrics`
+adds final retrieval status, stage/model-role/status/reasoning effort, timeout
+and bounded error kinds, reasoning tokens, and server-side X Search calls.
+Model roles are the bounded `stable`, `raw`, `public_oembed`, and `unknown`
+labels; request-provided model names never become metric labels. These
+surfaces report gateway state only and cannot inspect a client's private
+`disabledTools` or schema cache.
 
 ## Security Notes
 
@@ -692,7 +752,9 @@ Configure the MCP server separately:
 ### MCP lists the tool but calls fail
 
 ```bash
+scripts/check_mcp_gateway.sh
 curl -sS http://127.0.0.1:9996/health?deep=1
+curl -sS http://127.0.0.1:9996/health | jq '.mcp'
 curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_retrieve
 ```
 
@@ -703,13 +765,16 @@ Common causes:
   a stale schema cache still shows `grok_mcp_gateway/x_retrieve.json`.
 - xAI OAuth needs Hermes re-authentication.
 - The account does not have access to the requested model or X Search feature.
-- `allowed_x_handles` is too restrictive.
 - The client is calling `/mcp` with GET instead of POST.
 
 If the client says `tool x_retrieve is not enabled for server
 grok_mcp_gateway`, first check the client-side MCP config and remove
 `x_retrieve` from `disabledTools`. That error can be raised before the request
 reaches this gateway.
+
+Client schema files are derived caches, not gateway configuration. Reconnect or
+restart the affected client so it fetches a fresh `tools/list`; do not use a
+cached `x_retrieve.json` file as evidence of the running model or tool schema.
 
 ### Base URL confusion
 
@@ -721,8 +786,18 @@ Use `http://127.0.0.1:9996` when the client appends `/v1` itself.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+python -m pip install --upgrade pip==26.1.2
+python -m pip install --require-hashes -r requirements-dev.lock
 pytest -q
+```
+
+`requirements.txt` and `requirements-dev.txt` are the direct dependency inputs.
+Refresh their committed cross-platform hash locks after an intentional dependency
+change:
+
+```bash
+uv pip compile requirements.txt --universal --python-version 3.10 --generate-hashes --output-file requirements.lock
+uv pip compile requirements-dev.txt --universal --python-version 3.10 --generate-hashes --output-file requirements-dev.lock
 ```
 
 Useful checks before publishing:
