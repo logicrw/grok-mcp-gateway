@@ -129,8 +129,10 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
     matches: list[tuple[int, str, str]] = []
     markdown_spans: list[tuple[int, int]] = []
     for markdown_match in MARKDOWN_LINK_RE.finditer(text):
+        if not _has_markdown_boundaries(text, markdown_match.start(), markdown_match.end()):
+            continue
         markdown_spans.append(markdown_match.span())
-        url = _clean_url_token(markdown_match.group("url"))
+        url = markdown_match.group("url")
         status_id = status_id_from_url(url)
         if status_id:
             matches.append((markdown_match.start("url"), url, status_id))
@@ -142,6 +144,23 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
         if status_id:
             matches.append((match.start(), url, status_id))
     return matches
+
+
+def _has_markdown_boundaries(text: str, start: int, end: int) -> bool:
+    if start:
+        previous = text[start - 1]
+        if previous.isspace():
+            pass
+        elif previous in URL_LEADING_PUNCTUATION:
+            if start > 1 and not text[start - 2].isspace() and text[start - 2] not in URL_LEADING_PUNCTUATION:
+                return False
+        else:
+            return False
+    if end < len(text):
+        following = text[end]
+        if not following.isspace() and following not in URL_TRAILING_PUNCTUATION:
+            return False
+    return True
 
 
 def _clean_url_token(raw_token: str) -> str:

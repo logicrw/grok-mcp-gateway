@@ -92,6 +92,11 @@ def test_raw_parser_rejects_x_url_embedded_in_another_uri():
         f"https://evil.example@x.com/xai/status/{status_id}",
         f"https://x.com:bad/xai/status/{status_id}",
         f"https://x.com:444/xai/status/{status_id}",
+        f"https://evil.example/[source](https://x.com/xai/status/{status_id})",
+        f"javascript:[source](https://x.com/xai/status/{status_id})",
+        f"mailto:[source](https://x.com/xai/status/{status_id})",
+        f"[source](URL=https://x.com/xai/status/{status_id})",
+        f"[source](source:https://x.com/xai/status/{status_id})",
     ]
 
     for token in misleading_tokens:
