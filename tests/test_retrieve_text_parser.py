@@ -57,4 +57,26 @@ def test_raw_parser_accepts_i_web_status_url():
 
     posts = parse_raw_posts_from_text(raw, {"count": 3})
 
-    assert posts[0]["url"] == f"https://x.com/i/status/{status_id}"
+    assert posts[0]["url"] == f"https://twitter.com/i/web/status/{status_id}"
+
+
+def test_raw_parser_rejects_uncontrolled_status_url_suffixes():
+    status_id = "2071385784154759468"
+    invalid_urls = [
+        f"https://x.com/xai/status/{status_id}/analytics",
+        f"https://x.com/xai/status/{status_id}/photo/not-a-number",
+        f"https://x.com/xai/status/{status_id}/video/1/extra",
+        f"https://x.com/xai/status/{status_id}/photos/1",
+    ]
+
+    for url in invalid_urls:
+        assert parse_raw_posts_from_text(f"Main Post: {url}", {"count": 3}) == []
+
+
+def test_raw_parser_accepts_controlled_suffix_and_query_parameters():
+    status_id = "2071385784154759468"
+    url = f"https://x.com/xai/status/{status_id}/photo/1?s=20"
+
+    posts = parse_raw_posts_from_text(f"Main Post: {url}\nContent: media post", {"count": 3})
+
+    assert posts[0]["url"] == url

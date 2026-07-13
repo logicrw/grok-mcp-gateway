@@ -4,11 +4,12 @@ import re
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-STATUS_URL_RE = re.compile(
+STATUS_URL_TOKEN_RE = re.compile(
     r"(?<![/A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?(?:x|twitter)\.com/"
-    r"(?:[A-Za-z0-9_]{1,15}/status|i/web/status)/(\d{15,20})(?!\d)",
+    r"[^\s<>\"']+",
     re.IGNORECASE,
 )
+URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）》】」』"
 STATUS_PATH_RE = re.compile(
     r"^/(?:[A-Za-z0-9_]{1,15}/status|i/web/status)/(\d{15,20})(?:/(?:photo|video)/\d+)?/?$",
     re.IGNORECASE,
@@ -38,8 +39,8 @@ def extract_status_targets(
     if not query:
         return [], []
     candidates: list[tuple[int, str]] = []
-    for match in STATUS_URL_RE.finditer(query):
-        candidates.append((match.start(), match.group(1)))
+    for position, _url, status_id in _status_urls(query):
+        candidates.append((position, status_id))
     for match in LABELED_STATUS_ID_RE.finditer(query):
         status_id = match.group(1) or match.group(2)
         if status_id:
@@ -95,6 +96,16 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _status_urls(text: str) -> list[tuple[int, str, str]]:
+    matches: list[tuple[int, str, str]] = []
+    for match in STATUS_URL_TOKEN_RE.finditer(text):
+        url = match.group(0).rstrip(URL_TRAILING_PUNCTUATION)
+        status_id = status_id_from_url(url)
+        if status_id:
+            matches.append((match.start(), url, status_id))
+    return matches
+
+
 def _section_for_status(text: str, status_id: str) -> str:
     match = re.search(rf"(?<!\d){re.escape(status_id)}(?!\d)", text)
     if not match:
@@ -105,9 +116,8 @@ def _section_for_status(text: str, status_id: str) -> str:
 
 
 def _url_for_status(text: str, status_id: str) -> str:
-    for match in STATUS_URL_RE.finditer(_section_for_status(text, status_id)):
-        if match.group(1) == status_id:
-            url = match.group(0)
+    for _position, url, candidate_status_id in _status_urls(text):
+        if candidate_status_id == status_id:
             return url if url.startswith("http") else f"https://{url}"
     return f"https://x.com/i/status/{status_id}"
 
