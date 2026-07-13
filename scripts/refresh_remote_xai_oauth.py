@@ -14,7 +14,7 @@ Recommended split-chain flow:
 
 Example:
     python scripts/refresh_remote_xai_oauth.py \
-      --host user@example.com \
+      --host logicrw@host.example \
       --identity ~/.ssh/id_ed25519
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def scp_base(args: argparse.Namespace) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh remote Grok MCP Gateway OAuth credentials.")
-    parser.add_argument("--host", required=True, help="Remote SSH target, e.g. user@example.com")
+    parser.add_argument("--host", required=True, help="Remote SSH target, e.g. logicrw@host.example")
     parser.add_argument("--identity", help="SSH private key path")
     parser.add_argument("--port", type=int, help="SSH port")
     parser.add_argument("--remote-dir", default="/opt/grok-mcp-gateway", help="Remote Grok MCP Gateway directory")

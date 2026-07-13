@@ -32,9 +32,25 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   `GROK_PROXY_RETRIEVE_MODEL` and `GROK_PROXY_RETRIEVE_RAW_MODEL`, while keeping
   `GROK_PROXY_MCP_MODEL` and `GROK_PROXY_MCP_RAW_MODEL` as compatibility
   fallbacks.
+- Add target-status handling for `x_retrieve`: explicit X status URLs and
+  15-20 digit status IDs now populate `request.target_status_ids`,
+  `target_match`, concurrent public oEmbed recovery, and one batched exact
+  fallback before `no_match` is returned.
+- Add a narrow public oEmbed fallback for explicit target status IDs when
+  generated retrieval misses the target or returns only empty text.
+- Add route-aware Grok 4.5 reasoning, total/stage deadlines, explicit-target
+  caps, deterministic non-JSON status parsing, and low-cardinality stage/error/
+  usage metrics.
+- Add Ruff and BasedPyright CI gates and make warnings fail the Python test
+  matrix.
 
 ### Changed
 
+- Bump the MCP `x_retrieve` stable retrieval fallback from `grok-4.3` to
+  `grok-4.5`, keeping `GROK_PROXY_RETRIEVE_MODEL` and `GROK_PROXY_MCP_MODEL`
+  override precedence unchanged. See the official Grok 4.5 and X Search tool
+  contracts at https://docs.x.ai/developers/grok-4-5 and
+  https://docs.x.ai/developers/tools/x-search.
 - Default `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` is now `x_retrieve`.
 - Remove `x_search`, `x_posts`, and `x_latest_posts` from the public vNext MCP
   `tools/list`; calls to those old tool names now return a clear removed-tool
@@ -58,6 +74,25 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   model JSON for `request`, `filter_reliability`, `backend`, or
   `timeline_verified`.
 - Return pure serialized JSON in MCP text content for post-extraction results.
+- Preserve short stage diagnostics when an upstream raw/fallback stage returns
+  non-JSON text with no usable posts, instead of silently dropping the parse
+  failure context.
+- Return `x_retrieve.v1` structured error payloads for runtime retrieval
+  failures, so agents do not receive bare non-JSON `x_retrieve failed` text.
+- Keep Composer behind the general quality gate and remove it from the exact
+  target path. Exact targets now use Grok 4.5, concurrent oEmbed, and at most one
+  batched Grok 4.5 fallback.
+- Extend shallow/deep health with active stable/raw model IDs and upstream model
+  listing status without treating an unlisted model as a proven entitlement
+  failure.
+- Raise the supported runtime to Python 3.10+ and refresh FastAPI, Uvicorn,
+  pytest, Ruff, and BasedPyright to versions with current security fixes.
+
+### Fixed
+
+- Preserve the exception type when an upstream timeout has no message, and let
+  explicit status-ID retrieval continue to the public oEmbed fallback after a
+  stable X Search timeout instead of failing before deterministic recovery.
 
 ## 2026-05-18
 

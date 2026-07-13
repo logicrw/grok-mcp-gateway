@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+import config
 import mcp_posts
 from retrieve_schema import INTENTS, RETRIEVE_ARGUMENT_KEYS
+from retrieve_text_parser import extract_status_targets
 
 
 def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -18,7 +20,11 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
 
     intent = _clean_intent(arguments)
     sort = _clean_sort(arguments, default="latest" if handles and not query else "relevance")
-    mode = _detect_mode(intent, query, handles, sort)
+    target_status_ids, routing_warnings = extract_status_targets(
+        query,
+        limit=config.GROK_PROXY_RETRIEVE_MAX_TARGETS,
+    )
+    mode = _detect_mode(intent, query, handles, sort, target_status_ids)
     count = mcp_posts.clean_int(arguments, "count", 10, minimum=1, maximum=20)
     include_replies = _clean_bool(arguments, "include_replies", True)
     include_reposts = _clean_bool(arguments, "include_reposts", True)
@@ -56,6 +62,8 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
             "model_policy": _clean_model_policy(arguments),
             "quality": _clean_quality(arguments),
             "lookback_days": lookback_days,
+            "target_status_ids": target_status_ids,
+            "routing_warnings": routing_warnings,
         }
     )
     return search_arguments, metadata
@@ -125,8 +133,10 @@ def _clean_quality(arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _detect_mode(intent: str, query: Optional[str], handles: list[str], sort: str) -> str:
+def _detect_mode(intent: str, query: Optional[str], handles: list[str], sort: str, target_status_ids: list[str]) -> str:
     query_text = (query or "").lower()
+    if target_status_ids:
+        return "source_discovery"
     if handles and sort == "latest" and intent in {"auto", "posts", "research"}:
         return "latest_by_handle"
     if intent in {"source_discovery", "verify_claim"}:

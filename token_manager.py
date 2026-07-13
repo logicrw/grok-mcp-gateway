@@ -23,10 +23,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-logger = logging.getLogger(__name__)
-
 import config
 from error_sanitizer import sanitize_text
+
+logger = logging.getLogger(__name__)
 
 HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
 _STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()

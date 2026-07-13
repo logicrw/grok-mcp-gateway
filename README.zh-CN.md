@@ -164,7 +164,7 @@ Preview 表示：
 
 ### 1. 前置条件
 
-- Python 3.9+
+- Python 3.10+
 - 已安装 Hermes Agent
 - Hermes Agent 已完成 xAI Grok OAuth 授权
 - xAI/X 订阅或权益允许你使用目标 Grok / X Search 能力
@@ -216,7 +216,7 @@ curl -sS http://127.0.0.1:9996/health?deep=1
 curl -sS http://127.0.0.1:9996/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "grok-4.3",
+    "model": "grok-4.5",
     "messages": [{"role": "user", "content": "Reply with one short sentence."}]
   }'
 ```
@@ -267,7 +267,7 @@ API Format:    Chat Completions (/chat/completions)
 ```json
 {
   "mcpServers": {
-    "x_retrieve": {
+    "grok_mcp_gateway": {
       "url": "http://127.0.0.1:9996/mcp"
     }
   }
@@ -281,9 +281,9 @@ Agent 使用 X Search 工具，两者都要配置。
 
 ```yaml
 model_list:
-  - model_name: grok-4.3
+  - model_name: grok-4.5
     litellm_params:
-      model: openai/grok-4.3
+      model: openai/grok-4.5
       api_base: http://127.0.0.1:9996/v1
       api_key: dummy
 ```
@@ -299,7 +299,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="grok-4.3",
+    model="grok-4.5",
     messages=[{"role": "user", "content": "Say hello in one sentence."}],
 )
 print(response.choices[0].message.content)
@@ -338,7 +338,7 @@ POST http://127.0.0.1:9996/mcp
 | `best_effort_filters` | object | 否 | best-effort prompt 过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。这不是官方 X API 过滤。 |
 | `quality` | object | 否 | 可选质量门槛：`min_items`、`require_status_url`、`require_original_text`、`allow_raw_expansion`。 |
 | `model_policy` | string | 否 | `auto`、`stable_only` 或 `raw_expanded`，默认 `auto`。 |
-| `model` | string | 否 | stable MCP 调用使用的 xAI 模型，默认依次取 `GROK_PROXY_RETRIEVE_MODEL`、`GROK_PROXY_MCP_MODEL`、`grok-4.3`。 |
+| `model` | string | 否 | stable MCP 调用使用的 xAI 模型，默认依次取 `GROK_PROXY_RETRIEVE_MODEL`、`GROK_PROXY_MCP_MODEL`、`grok-4.5`。 |
 
 `x_retrieve` 至少需要 `query` 或 `handles` 其中之一。截图场景由上游多模态模型先 OCR 或描述，再把文本放进 `query`；gateway 不接收图片 URL 或 base64。
 
@@ -346,8 +346,23 @@ raw expansion 会在 quality gate 判断需要更多候选时自动触发，例�
 社交反应追踪、缺少 status URL 或缺少原文文本的场景。raw stage 依次使用
 `GROK_PROXY_RETRIEVE_RAW_MODEL`、`GROK_PROXY_MCP_RAW_MODEL`、
 `grok-composer-2.5-fast`。Composer/raw 模型可用性可能取决于账号权限。raw
-输出会先经过 parser 和 normalization，不会把 raw reasoning 直接暴露到
-`items`。
+输出会先经过 parser 和 normalization；非 JSON 文本必须包含真实 status URL 或
+带标签的 status ID，且不会把 raw reasoning 直接暴露到 `items`。
+
+当 `query` 中包含明确的 X status URL 或裸的 15-20 位 status ID 时，
+`x_retrieve` 会把它们视为目标帖子，并优先走源头帖定位；即使同时传了
+`handles` 和 `sort=latest`，也不会误判成“只看账号最新帖”。返回结果会包含
+`request.target_status_ids`，并在适用时包含 `target_match`，列出 requested、
+matched 和 missing ID。如果明确目标在 primary quality gate 之后仍然缺失，
+gateway 会先并发请求这些 exact ID 的公开 `publish.twitter.com/oembed`。仍然缺失的
+目标再进入一次批量 Grok 4.5 exact-status fallback。明确目标永远不走 Composer，也
+不会按 ID 逐条串行调用模型。
+单账号最新帖场景在 stable stage 找到帖子时仍保持快速；如果 stable stage 返回空
+结果，则允许再跑一次 raw expansion。
+
+Grok 4.5 reasoning 会按路由分配：明确目标、账号最新帖和结构化帖子使用 `low`；
+研究、信源发现和反应追踪使用 `medium`；`verify_claim` 使用 `high`。这个参数只发送给
+文档明确支持的 `grok-4.5`，不会传给自定义模型或 Composer。
 
 如果需要精确作者 timeline、分页、tweet fields、public metrics 或合规敏感用途，
 请使用官方 X API timeline endpoint 或官方 X MCP。
@@ -362,8 +377,11 @@ raw expansion 会在 quality gate 判断需要更多候选时自动触发，例�
   "timeline_verified": false,
   "mode": "semantic_research",
   "source_limit": "Generated retrieval via xAI x_search. Not official X API timeline.",
+  "retrieval_status": "ok",
   "warnings": [],
-  "request": {},
+  "request": {
+    "target_status_ids": []
+  },
   "retrieval_stages": [],
   "models_used": [],
   "filter_reliability": {},
@@ -379,6 +397,17 @@ raw expansion 会在 quality gate 判断需要更多候选时自动触发，例�
   }
 }
 ```
+
+`retrieval_status` 是给 agent 使用的机器可读状态：
+
+- `ok`：返回了可用 items；如果请求里有目标 status ID，也已经命中。
+- `empty`：没有返回可用 items，且请求里没有明确目标 status ID。
+- `no_match`：请求里有明确目标 status ID，但一个都没找到。
+- `degraded`：有可用 items，但 raw expansion 失败、有 warning、只命中了部分目标 ID，或只通过 citation 命中目标 URL 但没有抽出帖子正文。公开 oEmbed fallback 失败也会以 warning 形式报告。
+- `error`：参数校验或必要的 stable stage 失败，无法产生正常检索结果。
+
+当 `request.target_status_ids` 非空时，payload 还会包含
+`target_match.requested`、`target_match.matched` 和 `target_match.missing`。
 
 列出工具：
 
@@ -517,7 +546,7 @@ python scripts/export_xai_oauth.py > ~/xai-oauth.json
 在服务器导入：
 
 ```bash
-scp ~/xai-oauth.json user@example.com:/tmp/xai-oauth.json
+scp ~/xai-oauth.json logicrw@host.example:/tmp/xai-oauth.json
 python scripts/import_xai_oauth.py /tmp/xai-oauth.json
 rm -f /tmp/xai-oauth.json
 chmod 700 ~/.hermes
@@ -529,7 +558,7 @@ sudo systemctl restart grok-mcp-gateway
 
 ```bash
 python scripts/refresh_remote_xai_oauth.py \
-  --host user@example.com \
+  --host logicrw@host.example \
   --identity ~/.ssh/id_ed25519 \
   --print-reauth-command
 ```
@@ -592,12 +621,16 @@ sudo systemctl enable --now grok-mcp-gateway
 | `HERMES_POLL_INTERVAL` | `60` | Hermes auth 文件轮询间隔。 |
 | `UPSTREAM_RETRY_ATTEMPTS` | `2` | 幂等 upstream 请求和瞬时连接错误的重试次数。 |
 | `UPSTREAM_RETRY_DELAY` | `1.0` | upstream 重试基础间隔。 |
-| `GROK_PROXY_RETRIEVE_MODEL` | 未设置 | MCP `x_retrieve` 优先使用的 stable xAI 模型；未设置时回退到 `GROK_PROXY_MCP_MODEL`，再回退到 `grok-4.3`。 |
-| `GROK_PROXY_MCP_MODEL` | `grok-4.3` | 兼容旧配置的 MCP stable 模型默认值。 |
+| `GROK_PROXY_RETRIEVE_MODEL` | 未设置 | MCP `x_retrieve` 优先使用的 stable xAI 模型；未设置时回退到 `GROK_PROXY_MCP_MODEL`，再回退到 `grok-4.5`。 |
+| `GROK_PROXY_MCP_MODEL` | `grok-4.5` | 兼容旧配置的 MCP stable 模型默认值。 |
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | 低置信度、信源定位、社交反应场景的 raw expansion 模型；如果设置了 `GROK_PROXY_MCP_RAW_MODEL` 可作为兼容覆盖。 |
 | `GROK_PROXY_MCP_RAW_MODEL` | 未设置 | 兼容旧配置的 raw expansion 模型覆盖。 |
 | `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` | `x_retrieve` | MCP 工具 allowlist，逗号分隔。vNext 默认只暴露单个公开检索工具。 |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | 使用 xAI `x_search` backend 的 MCP 检索最大并发调用数。 |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120` | 单次 `x_retrieve` 墙钟总 deadline，限制在 10-300 秒。 |
+| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | `60` | 生成阶段上限，限制在 5-120 秒且不会超过总 deadline。 |
+| `GROK_PROXY_RETRIEVE_MAX_TARGETS` | `5` | 单次请求明确 status 目标上限，限制在 1-10。 |
+| `GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY` | `3` | 公开 oEmbed 并发数，限制在 1-10。 |
 | `GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS` | `false` | 调试时记录脱敏后的 upstream 错误 body。工具结果永远不会返回原始 upstream body。 |
 | `GROK_PROXY_AUTO_X_SEARCH` | `false` | 是否向 `/v1/responses` 请求注入 xAI `x_search`。 |
 | `GROK_PROXY_X_SEARCH_ALLOWED_HANDLES` | 未设置 | Auto-injected X Search 的账号 allowlist，逗号分隔。 |
@@ -625,6 +658,12 @@ sudo systemctl enable --now grok-mcp-gateway
 `last_refresh_status`、refresh 成功/失败次数、refresh token 是否轮换，以及
 `reauth_required`。当 refresh 失败时，gateway 会先检查 Hermes `auth.json` 里是否有
 更新的可用 xAI OAuth credential。如果没有，就明确返回 OAuth 错误并要求重新授权。
+`/health` 还包含 `mcp` 对象，用于显示 gateway 当前的工具 allowlist、已启用 MCP
+工具、已移除旧工具名和 stable/raw 模型 ID。`/health?deep=1` 根据 upstream 模型
+列表把模型标成 `listed`、`not_listed` 或 `unknown`，不会把“未列出”误报成无权限。
+`/metrics` 增加最终检索状态、stage/model/status/reasoning effort、timeout、有限错误
+类型、reasoning tokens 和 server-side X Search 调用数。它们只反映 gateway 自身
+状态，不能读取客户端私有 `disabledTools` 或 schema cache。
 
 ## 安全说明
 
@@ -651,7 +690,7 @@ sudo systemctl enable --now grok-mcp-gateway
 ```json
 {
   "mcpServers": {
-    "x_retrieve": {
+    "grok_mcp_gateway": {
       "url": "http://127.0.0.1:9996/mcp"
     }
   }
@@ -661,17 +700,25 @@ sudo systemctl enable --now grok-mcp-gateway
 ### MCP 能列出工具，但调用失败
 
 ```bash
+scripts/check_mcp_gateway.sh
 curl -sS http://127.0.0.1:9996/health?deep=1
+curl -sS http://127.0.0.1:9996/health | jq '.mcp'
 curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_retrieve
 ```
 
 常见原因：
 
 - `GROK_GATEWAY_MCP_TOOL_ALLOWLIST` 没有包含 `x_retrieve`。
+- MCP 客户端配置用 `disabledTools` 禁用了 `x_retrieve`，但 stale schema cache
+  仍然显示 `grok_mcp_gateway/x_retrieve.json` 存在。
 - xAI OAuth 需要重新在 Hermes 授权。
 - 当前账号没有目标模型或 X Search 权益。
 - `allowed_x_handles` 限制太窄。
 - 客户端用 GET 调 `/mcp`，而不是 POST。
+
+如果客户端报 `tool x_retrieve is not enabled for server grok_mcp_gateway`，
+先检查客户端 MCP 配置并移除 `disabledTools` 里的 `x_retrieve`。这个错误可能在
+请求到达 gateway 前就由客户端抛出。
 
 ### Base URL 混淆
 

@@ -28,10 +28,14 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 def sanitize_text(value: Any, *, max_length: int = 500) -> str:
     """Redact common credentials and trim to a log-safe one-line string."""
     text = str(value or "")
+    if not text and isinstance(value, BaseException):
+        text = value.__class__.__name__
     text = text.replace("\r", " ").replace("\n", " ")
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     text = re.sub(r"\s+", " ", text).strip()
+    if not text and isinstance(value, BaseException):
+        text = value.__class__.__name__
     if len(text) > max_length:
         return text[: max_length - 3].rstrip() + "..."
     return text

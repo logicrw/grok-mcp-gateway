@@ -1,0 +1,27 @@
+[project]
+name = "grok-mcp-gateway"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+exclude = ["work", "outputs", ".agpair"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.10"
+include = ["*.py", "scripts", "tests"]
+exclude = ["work/**", "outputs/**", ".agpair/**"]
+reportMissingTypeStubs = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportOptionalSubscript = "none"
+reportOptionalMemberAccess = "none"
+reportCallIssue = "none"
+reportAttributeAccessIssue = "none"

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import mcp_x_search
 import xai_responses
+from x_oembed import OEmbedPost, OEmbedResult
+
+
+async def _empty_oembed(status_ids, handles):
+    return OEmbedResult(posts=[], warnings=[])
 
 
 def test_build_x_search_tool_keeps_only_requested_options():
@@ -124,7 +130,7 @@ def test_build_latest_posts_search_arguments_rejects_bad_count():
 
 
 def test_compile_time_range_parses_week_before_last():
-    compiled = mcp_x_search._compile_time_range({"time_range": "上上周"}, today=mcp_x_search.date(2026, 5, 18))
+    compiled = mcp_x_search._compile_time_range({"time_range": "上上周"}, today=date(2026, 5, 18))
 
     assert compiled["from_date"] == "2026-05-04"
     assert compiled["to_date"] == "2026-05-10"
@@ -133,7 +139,7 @@ def test_compile_time_range_parses_week_before_last():
 
 def test_compile_time_range_parses_month_day_range_with_local_year():
     compiled = mcp_x_search._compile_time_range(
-        {"time_range": "4月1日到4月2日"}, today=mcp_x_search.date(2026, 5, 18)
+        {"time_range": "4月1日到4月2日"}, today=date(2026, 5, 18)
     )
 
     assert compiled["from_date"] == "2026-04-01"
@@ -268,6 +274,14 @@ def test_tools_list_returns_only_retrieve_tool_by_default():
     assert "posts" in tools["x_retrieve"]["outputSchema"]["required"]
     assert "filter_reliability" in tools["x_retrieve"]["outputSchema"]["required"]
     assert "source_extraction_status" in tools["x_retrieve"]["outputSchema"]["required"]
+    assert "retrieval_status" in tools["x_retrieve"]["outputSchema"]["required"]
+    assert tools["x_retrieve"]["outputSchema"]["properties"]["retrieval_status"]["enum"] == [
+        "degraded",
+        "empty",
+        "error",
+        "no_match",
+        "ok",
+    ]
 
 
 def test_initialize_uses_structured_content_protocol_version():
@@ -375,6 +389,7 @@ def test_tools_call_wraps_retrieve_research_result(monkeypatch):
         )
 
     monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -406,6 +421,7 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
         )
 
     monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -422,6 +438,10 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
     assert response["result"]["isError"] is True
     assert "super-secret" not in text
     assert "Bearer abc" not in text
+    structured = json.loads(text)
+    assert structured["schema_version"] == "x_retrieve.v1"
+    assert structured["retrieval_status"] == "error"
+    assert structured["warnings"][0].startswith("x_retrieve failed:")
 
 
 def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):
@@ -510,6 +530,7 @@ def test_tools_call_wraps_retrieve_latest_by_handle_result(monkeypatch):
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
 
     monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
         mcp_x_search._handle(
@@ -538,6 +559,401 @@ def test_tools_call_wraps_retrieve_latest_by_handle_result(monkeypatch):
     assert response["result"]["structuredContent"]["posts"] == []
     assert response["result"]["structuredContent"]["items"] == []
     assert mcp_x_search._x_search_total_count == before + 1
+
+
+def test_tools_call_routes_status_targets_before_latest_by_handle(monkeypatch):
+    seen = {}
+
+    async def fake_call(arguments):
+        seen.update(arguments)
+        return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "handles": ["@elonmusk"],
+                        "query": "2071385784154759468 OR https://x.com/elonmusk/status/2071323738201837785",
+                        "sort": "latest",
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["mode"] == "source_discovery"
+    assert structured["request"]["target_status_ids"] == ["2071385784154759468", "2071323738201837785"]
+    assert "最近30天" not in seen["query"]
+
+
+def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatch):
+    calls = []
+
+    async def fake_call(arguments):
+        calls.append(dict(arguments))
+        if len(calls) == 1:
+            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"raw latest","author":"logicrw","url":"https://x.com/logicrw/status/2"}]}',
+            {},
+            [{"url": "https://x.com/logicrw/status/2"}],
+            None,
+            mcp_x_search.mcp_retrieve.RAW_MODEL,
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "handles": ["@logicrw"],
+                        "sort": "latest",
+                        "count": 3,
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert len(calls) == 2
+    assert calls[1]["model"] == mcp_x_search.mcp_retrieve.RAW_MODEL
+    assert structured["items"][0]["text"] == "raw latest"
+    assert structured["retrieval_stages"][-1]["status"] == "success"
+
+
+def test_tools_call_reports_no_match_for_missing_target_status(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"different post","author":"xai","url":"https://x.com/xai/status/9999999999999999999"}]}',
+            {},
+            [{"url": "https://x.com/xai/status/9999999999999999999"}],
+            None,
+            "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {"query": "https://x.com/xai/status/2071385784154759468"},
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "no_match"
+    assert structured["target_match"] == {
+        "requested": ["2071385784154759468"],
+        "matched": [],
+        "missing": ["2071385784154759468"],
+    }
+
+
+def test_tools_call_uses_target_fallback_for_missing_status_id(monkeypatch):
+    calls = []
+
+    async def fake_call(arguments):
+        calls.append(arguments)
+        query = arguments["query"]
+        if "Target status ID: 2071385784154759468" in query:
+            return xai_responses.ResponsesResult(
+                '{"posts":[{"text":"target post","author":"xai","url":"https://x.com/xai/status/2071385784154759468"}]}',
+                {},
+                [{"url": "https://x.com/xai/status/2071385784154759468"}],
+                None,
+                "grok-4.3",
+            )
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"different post","author":"xai","url":"https://x.com/xai/status/9999999999999999999"}]}',
+            {},
+            [{"url": "https://x.com/xai/status/9999999999999999999"}],
+            None,
+            "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "handles": ["@xai"],
+                        "query": "https://x.com/xai/status/2071385784154759468",
+                        "sort": "latest",
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "ok"
+    assert structured["target_match"]["matched"] == ["2071385784154759468"]
+    assert [stage["name"] for stage in structured["retrieval_stages"]] == [
+        "stable_extract",
+        "raw_expansion",
+        "public_oembed",
+        "target_fallback",
+    ]
+    assert "from_date" not in calls[-1]
+    assert "to_date" not in calls[-1]
+
+
+def test_tools_call_marks_citation_backed_target_without_text_as_degraded(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"author":"xai","text":"","url":null}]}',
+            {},
+            [{"url": "https://x.com/i/status/2071385784154759468"}],
+            None,
+            arguments.get("model") or "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {"query": "https://x.com/xai/status/2071385784154759468"},
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "degraded"
+    assert structured["target_match"]["matched"] == ["2071385784154759468"]
+    assert structured["items"] == [
+        {
+            "id": "2071385784154759468",
+            "url": "https://x.com/i/status/2071385784154759468",
+            "author": None,
+            "created_at": None,
+            "text": "",
+            "metrics": {},
+            "relation": "primary",
+            "confidence": "low",
+            "warnings": ["target status URL was citation-backed but text was not extracted"],
+            "citation_backed": True,
+        }
+    ]
+
+
+def test_tools_call_fills_target_text_from_public_oembed(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"author":"xai","text":"","url":null}]}',
+            {},
+            [],
+            None,
+            arguments.get("model") or "grok-4.3",
+        )
+
+    async def fake_oembed(status_ids, handles):
+        assert status_ids == ["2071385784154759468"]
+        assert handles == ["xai"]
+        return OEmbedResult(
+            posts=[
+                OEmbedPost(
+                    status_id="2071385784154759468",
+                    url="https://x.com/i/status/2071385784154759468",
+                    author="xai",
+                    text="public embed text",
+                )
+            ],
+            warnings=[],
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "handles": ["@xai"],
+                        "query": "https://x.com/xai/status/2071385784154759468",
+                        "model_policy": "stable_only",
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "ok"
+    assert structured["target_match"]["matched"] == ["2071385784154759468"]
+    assert structured["target_match"]["missing"] == []
+    assert structured["items"][0]["text"] == "public embed text"
+    assert structured["items"][0]["public_embed_backed"] is True
+    assert structured["retrieval_stages"][-1] == {
+        "name": "public_oembed",
+        "model": "publish.twitter.com/oembed",
+        "status": "success",
+        "target_status_ids": ["2071385784154759468"],
+        "items": 1,
+    }
+
+
+def test_tools_call_uses_oembed_after_stable_target_timeout(monkeypatch):
+    async def fake_call(arguments):
+        assert arguments["model"] == mcp_x_search.DEFAULT_MODEL
+        raise httpx.ReadTimeout("")
+
+    async def fake_oembed(status_ids, handles):
+        assert status_ids == ["2071385784154759468"]
+        return OEmbedResult(
+            posts=[
+                OEmbedPost(
+                    status_id="2071385784154759468",
+                    url="https://x.com/i/status/2071385784154759468",
+                    author=None,
+                    text="public embed text after timeout",
+                )
+            ],
+            warnings=[],
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "query": "https://x.com/xai/status/2071385784154759468",
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert response["result"]["isError"] is False
+    assert structured["retrieval_status"] == "degraded"
+    assert structured["target_match"]["matched"] == ["2071385784154759468"]
+    assert "stable extract failed: upstream timeout" in structured["warnings"]
+    assert [stage["name"] for stage in structured["retrieval_stages"]] == [
+        "stable_extract",
+        "raw_expansion",
+        "public_oembed",
+    ]
+    assert structured["retrieval_stages"][0]["status"] == "failed"
+    assert structured["retrieval_stages"][1]["reason"] == "explicit_target_lane"
+
+
+def test_tools_call_preserves_target_fallback_diagnostics_when_json_parse_fails(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            "Main Post:\n- ID: 9999999999999999999\n- Content: non-json upstream output",
+            {},
+            [],
+            None,
+            arguments.get("model") or "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {"query": "https://x.com/xai/status/2071385784154759468"},
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "no_match"
+    assert structured["stage_diagnostics"][0]["stage"] == "target_fallback"
+    assert "non-json upstream output" in structured["stage_diagnostics"][0]["raw_text_preview"]
+
+
+def test_tools_call_reports_degraded_for_partial_target_status_match(monkeypatch):
+    async def fake_call(arguments):
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"matched post","author":"xai","url":"https://x.com/xai/status/2071385784154759468"}]}',
+            {},
+            [{"url": "https://x.com/xai/status/2071385784154759468"}],
+            None,
+            "grok-4.3",
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    response = asyncio.run(
+        mcp_x_search._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "x_retrieve",
+                    "arguments": {
+                        "query": "2071385784154759468 OR 2071323738201837785",
+                    },
+                },
+            }
+        )
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "degraded"
+    assert structured["target_match"]["matched"] == ["2071385784154759468"]
+    assert structured["target_match"]["missing"] == ["2071323738201837785"]
 
 
 def test_tools_call_wraps_retrieve_posts_result(monkeypatch):
