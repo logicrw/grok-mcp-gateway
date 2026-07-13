@@ -14,7 +14,7 @@
 
 Reasoning effort is attached only to the documented `grok-4.5` model. Custom models and `grok-composer-2.5-fast` do not inherit that parameter. This follows the [Grok 4.5](https://docs.x.ai/developers/grok-4-5) and [reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning) contracts.
 
-`model_policy=stable_only` disables Composer/raw expansion; it does not disable public oEmbed or the active stable model's exact-target fallback. Exact-target results are deterministically filtered to the requested status IDs before return.
+`model_policy=stable_only` disables Composer/raw expansion; it does not disable public oEmbed or the active stable model's exact-target fallback. Exact-target results are deterministically filtered to the requested status IDs before return, and unstructured upstream `raw_text` or stage previews are omitted from that response path.
 
 ## Bounded orchestration
 

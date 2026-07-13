@@ -222,6 +222,8 @@ def _retain_exact_targets(payload: Dict[str, Any], target_status_ids: set[str]) 
         if isinstance(source, dict)
         and status_id_from_url(str(source.get("url") or source.get("title") or "")) in target_status_ids
     ]
+    payload.pop("raw_text", None)
+    payload.pop("stage_diagnostics", None)
     payload["groups"] = _groups(payload["items"])
 
 

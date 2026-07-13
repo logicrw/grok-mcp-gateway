@@ -114,6 +114,55 @@ def test_exact_target_drops_nearby_posts_from_result(monkeypatch):
     assert structured["target_match"]["missing"] == [target]
 
 
+def test_exact_target_accepts_trusted_media_suffix(monkeypatch):
+    target = "2071385784154759468"
+    media_url = f"https://x.com/xai/status/{target}/photo/1"
+    calls = []
+
+    async def fake_search(arguments):
+        calls.append(dict(arguments))
+        return xai_responses.ResponsesResult(
+            f'{{"posts":[{{"text":"target media post","url":"{media_url}"}}]}}',
+            {},
+            [],
+            None,
+            arguments["model"],
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    structured = _call({"query": media_url})["result"]["structuredContent"]
+
+    assert len(calls) == 1
+    assert structured["retrieval_status"] == "ok"
+    assert structured["target_match"]["matched"] == [target]
+    assert structured["items"][0]["url"] == media_url
+
+
+def test_exact_target_accepts_i_web_status_url(monkeypatch):
+    target = "2071385784154759468"
+    history_url = f"https://twitter.com/i/web/status/{target}"
+
+    async def fake_search(arguments):
+        return xai_responses.ResponsesResult(
+            f'{{"posts":[{{"text":"historical target","url":"{history_url}"}}]}}',
+            {},
+            [],
+            None,
+            arguments["model"],
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    structured = _call({"query": history_url})["result"]["structuredContent"]
+
+    assert structured["retrieval_status"] == "ok"
+    assert structured["target_match"]["matched"] == [target]
+    assert structured["items"][0]["url"] == history_url
+
+
 def test_model_override_has_a_hard_length_limit():
     response = _call({"query": "latest xAI posts", "model": "m" * 129})
 

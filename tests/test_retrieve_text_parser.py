@@ -44,4 +44,17 @@ def test_status_id_from_url_requires_x_or_twitter_host():
 
     assert status_id_from_url(f"https://x.com/xai/status/{status_id}") == status_id
     assert status_id_from_url(f"https://mobile.twitter.com/xai/status/{status_id}") == status_id
+    assert status_id_from_url(f"https://x.com/xai/status/{status_id}/photo/1") == status_id
+    assert status_id_from_url(f"https://twitter.com/xai/status/{status_id}/video/2") == status_id
+    assert status_id_from_url(f"https://twitter.com/i/web/status/{status_id}") == status_id
     assert status_id_from_url(f"https://example.com/xai/status/{status_id}") is None
+    assert status_id_from_url(f"https://x.com/xai/status/{status_id}/analytics") is None
+
+
+def test_raw_parser_accepts_i_web_status_url():
+    status_id = "2071385784154759468"
+    raw = f"Main Post: https://twitter.com/i/web/status/{status_id}\nContent: archived link"
+
+    posts = parse_raw_posts_from_text(raw, {"count": 3})
+
+    assert posts[0]["url"] == f"https://x.com/i/status/{status_id}"

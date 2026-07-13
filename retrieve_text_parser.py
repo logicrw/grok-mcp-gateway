@@ -6,10 +6,13 @@ from urllib.parse import urlparse
 
 STATUS_URL_RE = re.compile(
     r"(?<![/A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?(?:x|twitter)\.com/"
-    r"[A-Za-z0-9_]{1,15}/status/(\d{15,20})(?!\d)",
+    r"(?:[A-Za-z0-9_]{1,15}/status|i/web/status)/(\d{15,20})(?!\d)",
     re.IGNORECASE,
 )
-STATUS_PATH_RE = re.compile(r"^/[A-Za-z0-9_]{1,15}/status/(\d{15,20})(?:/)?$")
+STATUS_PATH_RE = re.compile(
+    r"^/(?:[A-Za-z0-9_]{1,15}/status|i/web/status)/(\d{15,20})(?:/(?:photo|video)/\d+)?/?$",
+    re.IGNORECASE,
+)
 STATUS_HOSTS = {
     "x.com",
     "www.x.com",

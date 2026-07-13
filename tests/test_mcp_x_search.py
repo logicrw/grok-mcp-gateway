@@ -888,7 +888,7 @@ def test_tools_call_uses_oembed_after_stable_target_timeout(monkeypatch):
     assert structured["retrieval_stages"][1]["reason"] == "explicit_target_lane"
 
 
-def test_tools_call_preserves_target_fallback_diagnostics_when_json_parse_fails(monkeypatch):
+def test_tools_call_drops_untrusted_target_fallback_diagnostics(monkeypatch):
     async def fake_call(arguments):
         return xai_responses.ResponsesResult(
             "Main Post:\n- ID: 9999999999999999999\n- Content: non-json upstream output",
@@ -917,8 +917,8 @@ def test_tools_call_preserves_target_fallback_diagnostics_when_json_parse_fails(
 
     structured = response["result"]["structuredContent"]
     assert structured["retrieval_status"] == "no_match"
-    assert structured["stage_diagnostics"][0]["stage"] == "target_fallback"
-    assert "non-json upstream output" in structured["stage_diagnostics"][0]["raw_text_preview"]
+    assert "raw_text" not in structured
+    assert "stage_diagnostics" not in structured
 
 
 def test_tools_call_reports_degraded_for_partial_target_status_match(monkeypatch):
