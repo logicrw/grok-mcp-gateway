@@ -90,10 +90,40 @@ def test_raw_parser_rejects_x_url_embedded_in_another_uri():
         f"mailto:x.com/xai/status/{status_id}",
         f"data:text/plain,x.com/xai/status/{status_id}",
         f"https://evil.example@x.com/xai/status/{status_id}",
+        f"https://x.com:bad/xai/status/{status_id}",
+        f"https://x.com:444/xai/status/{status_id}",
     ]
 
     for token in misleading_tokens:
         assert parse_raw_posts_from_text(f"Main Post: {token}", {"count": 3}) == []
+
+
+def test_raw_parser_accepts_default_https_port():
+    status_id = "2071385784154759468"
+    url = f"https://x.com:443/xai/status/{status_id}"
+
+    posts = parse_raw_posts_from_text(f"Main Post: {url}", {"count": 3})
+
+    assert posts[0]["url"] == url
+
+
+def test_raw_parser_accepts_standard_url_wrappers():
+    status_id = "2071385784154759468"
+    url = f"https://x.com/xai/status/{status_id}"
+    wrapped_values = [
+        f"<{url}>",
+        f'"{url}"',
+        f"'{url}'",
+        f"`{url}`",
+        f"[source]({url})",
+        f"URL={url}",
+        f"URL：{url}",
+    ]
+
+    for wrapped in wrapped_values:
+        posts = parse_raw_posts_from_text(wrapped, {"count": 3})
+
+        assert posts[0]["url"] == url
 
 
 def test_raw_parser_accepts_wrapped_url_with_chinese_punctuation():

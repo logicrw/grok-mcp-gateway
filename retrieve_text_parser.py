@@ -7,10 +7,12 @@ from urllib.parse import urlparse
 STATUS_URL_TOKEN_RE = re.compile(
     r"\S+",
 )
-URL_LEADING_PUNCTUATION = "([{<\"'“‘（【《「『"
-URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？、…）》】」』”’"
+URL_LEADING_PUNCTUATION = "([{<\"'`“‘（【《「『"
+URL_TRAILING_PUNCTUATION = ".,;:!?)]}>\"'`，。；：！？、…）》】」』”’"
 URL_TEXT_PREFIXES = (
     "url:",
+    "url=",
+    "url：",
     "post:",
     "source:",
     "原文：",
@@ -105,6 +107,7 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
         hostname = parsed.hostname
         username = parsed.username
         password = parsed.password
+        port = parsed.port
     except ValueError:
         return None
     if (
@@ -112,6 +115,7 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
         or hostname not in STATUS_HOSTS
         or username is not None
         or password is not None
+        or (port is not None and port != (443 if parsed.scheme == "https" else 80))
     ):
         return None
     match = STATUS_PATH_RE.match(parsed.path)
@@ -129,7 +133,8 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
 
 
 def _clean_url_token(raw_token: str) -> str:
-    token = raw_token.lstrip(URL_LEADING_PUNCTUATION)
+    token = _markdown_link_url(raw_token) or raw_token
+    token = token.lstrip(URL_LEADING_PUNCTUATION)
     lowered = token.lower()
     for prefix in URL_TEXT_PREFIXES:
         if lowered.startswith(prefix):
@@ -139,6 +144,19 @@ def _clean_url_token(raw_token: str) -> str:
     if delimiter_positions:
         token = token[: min(delimiter_positions)]
     return token.rstrip(URL_TRAILING_PUNCTUATION)
+
+
+def _markdown_link_url(raw_token: str) -> str:
+    if not raw_token.startswith("[") or "](" not in raw_token:
+        return ""
+    separator = raw_token.find("](")
+    closing = raw_token.rfind(")")
+    if closing <= separator + 2:
+        return ""
+    suffix = raw_token[closing + 1 :]
+    if suffix and any(character not in URL_TRAILING_PUNCTUATION for character in suffix):
+        return ""
+    return raw_token[separator + 2 : closing]
 
 
 def _section_for_status(text: str, status_id: str) -> str:
