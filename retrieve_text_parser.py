@@ -121,6 +121,7 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
         or hostname not in STATUS_HOSTS
         or username is not None
         or password is not None
+        or bool(parsed.params)
         or (port is not None and port != (443 if parsed.scheme == "https" else 80))
     ):
         return None

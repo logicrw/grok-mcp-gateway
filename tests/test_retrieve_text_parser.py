@@ -67,6 +67,8 @@ def test_raw_parser_rejects_uncontrolled_status_url_suffixes():
         f"https://x.com/xai/status/{status_id}/photo/not-a-number",
         f"https://x.com/xai/status/{status_id}/video/1/extra",
         f"https://x.com/xai/status/{status_id}/photos/1",
+        f"https://x.com/xai/status/{status_id};analytics",
+        f"https://x.com/xai/status/{status_id};unexpected",
     ]
 
     for url in invalid_urls:
