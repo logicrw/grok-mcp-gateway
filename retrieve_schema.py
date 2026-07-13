@@ -9,6 +9,7 @@ SCHEMA_VERSION = "x_retrieve.v1"
 BACKEND = "xai_x_search_orchestrated"
 SOURCE_LIMIT = "Generated retrieval via xAI x_search. Not official X API timeline."
 RETRIEVE_QUERY_MAX_CHARS = 2000
+RETRIEVE_MODEL_MAX_CHARS = 128
 RAW_MODEL = (
     os.getenv("GROK_PROXY_RETRIEVE_RAW_MODEL")
     or os.getenv("GROK_PROXY_MCP_RAW_MODEL")
@@ -109,7 +110,12 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
                     "additionalProperties": False,
                 },
                 "model_policy": {"type": "string", "enum": ["auto", "stable_only", "raw_expanded"]},
-                "model": {"type": "string", "description": f"Optional stable xAI model. Defaults to {default_model}."},
+                "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": RETRIEVE_MODEL_MAX_CHARS,
+                    "description": f"Optional stable xAI model. Defaults to {default_model}.",
+                },
             },
             "additionalProperties": False,
         },

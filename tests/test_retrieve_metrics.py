@@ -30,8 +30,32 @@ def test_metrics_include_stage_usage_timeout_and_final_status():
     assert 'stage="stable_extract"' in lines
     assert 'reasoning_effort="low"' in lines
     assert 'mcp_x_retrieve_timeout_total{type="stage"}' in lines
-    assert 'mcp_x_retrieve_reasoning_tokens_total{stage="stable_extract",model="grok-4.5"} 12' in lines
-    assert 'mcp_x_retrieve_x_search_calls_total{stage="stable_extract",model="grok-4.5"} 3' in lines
+    assert 'mcp_x_retrieve_reasoning_tokens_total{stage="stable_extract",model_role="stable"} 12' in lines
+    assert 'mcp_x_retrieve_x_search_calls_total{stage="stable_extract",model_role="stable"} 3' in lines
+
+
+def test_custom_model_names_cannot_expand_metric_cardinality():
+    for index in range(25):
+        retrieve_metrics.record_stage(
+            stage="target_fallback",
+            model=f"user-model-{index}",
+            status="success",
+            reasoning_effort="none",
+            duration_seconds=0.01,
+        )
+
+    matching = [
+        line
+        for line in retrieve_metrics.metrics_lines()
+        if line.startswith("mcp_x_retrieve_stage_total")
+        and 'stage="target_fallback"' in line
+        and 'status="success"' in line
+        and 'reasoning_effort="none"' in line
+    ]
+
+    assert len(matching) == 1
+    assert 'model_role="stable"' in matching[0]
+    assert "user-model" not in matching[0]
 
 
 def test_parse_usage_metrics_supports_nested_and_flat_shapes():

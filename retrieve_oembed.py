@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from retrieve_text_parser import status_id_from_url
 from x_oembed import OEmbedPost
 
 
@@ -49,14 +50,30 @@ def _upsert_item(payload: Dict[str, Any], item: Dict[str, Any]) -> None:
     for index, existing in enumerate(payload["items"]):
         if existing.get("id") == item.get("id"):
             merged = dict(existing)
-            merged.update(item)
+            merged["text"] = item["text"]
+            merged["confidence"] = "high"
+            merged["citation_backed"] = True
+            merged["public_embed_backed"] = True
+            if not merged.get("url"):
+                merged["url"] = item["url"]
+            if not merged.get("author") and item.get("author"):
+                merged["author"] = item["author"]
             payload["items"][index] = merged
             return
     payload["items"].append(item)
 
 
 def _append_post(payload: Dict[str, Any], post: OEmbedPost) -> None:
-    if any(existing.get("url") == post.url for existing in payload["posts"] if isinstance(existing, dict)):
+    for existing in payload["posts"]:
+        if not isinstance(existing, dict) or status_id_from_url(existing.get("url")) != post.status_id:
+            continue
+        existing["text"] = post.text
+        existing["confidence"] = "high"
+        existing["citation_backed"] = True
+        if not existing.get("url"):
+            existing["url"] = post.url
+        if not existing.get("author") and post.author:
+            existing["author"] = post.author
         return
     payload["posts"].append(
         {
@@ -72,7 +89,11 @@ def _append_post(payload: Dict[str, Any], post: OEmbedPost) -> None:
 
 
 def _append_source(payload: Dict[str, Any], post: OEmbedPost) -> None:
-    if any(existing.get("url") == post.url for existing in payload["sources"] if isinstance(existing, dict)):
+    if any(
+        status_id_from_url(existing.get("url")) == post.status_id
+        for existing in payload["sources"]
+        if isinstance(existing, dict)
+    ):
         return
     payload["sources"].append({"url": post.url, "title": "X public oEmbed"})
 

@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 STATUS_URL_RE = re.compile(
-    r"(?:https?://)?(?:x|twitter)\.com/[A-Za-z0-9_]{1,15}/status/(\d{15,20})",
+    r"(?<![/A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?(?:x|twitter)\.com/"
+    r"[A-Za-z0-9_]{1,15}/status/(\d{15,20})(?!\d)",
     re.IGNORECASE,
 )
+STATUS_PATH_RE = re.compile(r"^/[A-Za-z0-9_]{1,15}/status/(\d{15,20})(?:/)?$")
+STATUS_HOSTS = {
+    "x.com",
+    "www.x.com",
+    "mobile.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com",
+}
 LABELED_STATUS_ID_RE = re.compile(
     r"(?:target\s+)?status\s+id\s*[:#=]\s*(\d{15,20})|(?:^|\n)\s*[-*]?\s*id\s*[:#=]\s*(\d{15,20})",
     re.IGNORECASE,
@@ -49,7 +60,7 @@ def parse_raw_posts_from_text(text: str, metadata: Dict[str, Any]) -> list[Dict[
     if not cleaned:
         return []
     count_limit = int(metadata.get("count") or 20)
-    status_ids, _ = extract_status_targets(cleaned, limit=count_limit, allow_bare_ids=True)
+    status_ids, _ = extract_status_targets(cleaned, limit=count_limit, allow_bare_ids=False)
     if not status_ids:
         return []
     requested = {str(item) for item in metadata.get("target_status_ids") or []}
@@ -69,6 +80,16 @@ def parse_raw_posts_from_text(text: str, metadata: Dict[str, Any]) -> list[Dict[
         }
         for status_id in status_ids
     ]
+
+
+def status_id_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in STATUS_HOSTS:
+        return None
+    match = STATUS_PATH_RE.match(parsed.path)
+    return match.group(1) if match else None
 
 
 def _section_for_status(text: str, status_id: str) -> str:

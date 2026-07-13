@@ -73,7 +73,7 @@ async def run_search_stage(
 
     record_stage(
         stage=stage,
-        model=model,
+        model=result.model,
         status="success",
         reasoning_effort=effective_effort,
         duration_seconds=time.monotonic() - started,
@@ -81,7 +81,7 @@ async def run_search_stage(
     reasoning_tokens, x_search_calls = xai_responses.parse_usage_metrics(result.usage)
     record_usage(
         stage=stage,
-        model=model,
+        model=result.model,
         reasoning_tokens=reasoning_tokens,
         x_search_calls=x_search_calls,
     )

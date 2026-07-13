@@ -2,4 +2,4 @@
 pytest==9.1.1
 ruff==0.15.21
 basedpyright==1.39.9
-httpx2==2.5.0
+httpx2==2.5.0  # Starlette 1.x TestClient backend; required by warnings-as-errors tests.

@@ -13,7 +13,7 @@ import mcp_posts
 import mcp_retrieve
 import xai_responses
 from retrieve_policy import model_supports_reasoning_effort
-from retrieve_schema import retrieve_tool_definition
+from retrieve_schema import RETRIEVE_MODEL_MAX_CHARS, retrieve_tool_definition
 
 X_SEARCH_TOOL_NAME = "x_search"
 POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
@@ -148,6 +148,8 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"query must be at most {X_SEARCH_INPUT_MAX_CHARS} characters")
 
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    if len(model) > RETRIEVE_MODEL_MAX_CHARS:
+        raise ValueError(f"model must be at most {RETRIEVE_MODEL_MAX_CHARS} characters")
     payload: Dict[str, Any] = {
         "model": model,
         "input": query,
@@ -172,7 +174,9 @@ def tool_removed(tool_name: str) -> bool:
 def tool_error_result(tool_name: str, arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
     if tool_name == RETRIEVE_TOOL_NAME:
         retrieve_arguments = dict(arguments)
-        retrieve_arguments["model"] = str(retrieve_arguments.get("model") or DEFAULT_MODEL)
+        requested_model = retrieve_arguments.get("model")
+        model = requested_model.strip() if isinstance(requested_model, str) else ""
+        retrieve_arguments["model"] = (model or DEFAULT_MODEL)[:RETRIEVE_MODEL_MAX_CHARS]
         return mcp_retrieve.error_result(retrieve_arguments, error_text)
     return {"content": [{"type": "text", "text": f"{tool_name} failed: {error_text}"}], "isError": True}
 
@@ -185,7 +189,10 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
         if tool_name != RETRIEVE_TOOL_NAME:
             raise ValueError(f"tool removed in vNext: {tool_name}. Use x_retrieve.")
         retrieve_arguments = dict(arguments)
-        requested_model = str(retrieve_arguments.get("model") or "").strip()
+        model_value = retrieve_arguments.get("model")
+        if model_value is not None and not isinstance(model_value, str):
+            raise ValueError("model must be a string")
+        requested_model = model_value.strip() if isinstance(model_value, str) else ""
         retrieve_arguments["model"] = requested_model or DEFAULT_MODEL
         result = await mcp_retrieve.call_retrieve(retrieve_arguments, search=_call_x_search_result)
         _record_x_search("success", time.monotonic() - start)

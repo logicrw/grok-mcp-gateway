@@ -143,7 +143,7 @@ async def _run_exact_target_lane(
     )
     await _run_public_oembed(payload, metadata, budget)
     fallback_ids = target_status_ids_needing_text(payload, metadata)
-    if not fallback_ids or metadata.get("model_policy") == "stable_only":
+    if not fallback_ids:
         return
 
     fallback_arguments = dict(search_arguments)
@@ -183,6 +183,7 @@ async def _run_public_oembed(payload: Dict[str, Any], metadata: Dict[str, Any], 
     if timeout <= 0:
         record_timeout("total")
         record_error(stage="public_oembed", kind="total_timeout")
+        payload["warnings"].append("public oEmbed skipped: total retrieval budget exhausted")
         _append_oembed_stage(payload, status_ids, "skipped", 0)
         return
     try:

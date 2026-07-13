@@ -4,12 +4,15 @@ import asyncio
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Final, Optional
+from urllib.parse import urlparse
 
 import httpx
 
 import config
 
 OEMBED_ENDPOINT: Final = "https://publish.twitter.com/oembed"
+OEMBED_HOSTS: Final = {"publish.twitter.com", "publish.x.com"}
+OEMBED_REDIRECT_LIMIT: Final = 3
 OEMBED_TIMEOUT_SECONDS: Final = 8.0
 USER_AGENT: Final = "grok-mcp-gateway/0.1 (+https://github.com/logicrw/grok-mcp-gateway)"
 
@@ -52,7 +55,7 @@ class TweetParagraphParser(HTMLParser):
 
 async def fetch_oembed_posts(
     status_ids: list[str],
-    handles: list[str],
+    _handles: list[str],
     *,
     client: Optional[httpx.AsyncClient] = None,
     concurrency: Optional[int] = None,
@@ -68,7 +71,7 @@ async def fetch_oembed_posts(
 
     async def fetch_one(status_id: str, http_client: httpx.AsyncClient) -> OEmbedPost | str | None:
         async with semaphore:
-            return await _fetch_one(http_client, status_id, handles)
+            return await _fetch_one(http_client, status_id)
 
     if client is not None:
         results = await asyncio.gather(*(fetch_one(status_id, client) for status_id in unique_status_ids))
@@ -87,11 +90,10 @@ async def fetch_oembed_posts(
 async def _fetch_one(
     client: httpx.AsyncClient,
     status_id: str,
-    handles: list[str],
 ) -> OEmbedPost | str | None:
     url = f"https://x.com/i/status/{status_id}"
     try:
-        response = await client.get(OEMBED_ENDPOINT, params={"url": url, "omit_script": "1"}, follow_redirects=True)
+        response = await _get_oembed_response(client, url)
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError:
@@ -103,7 +105,26 @@ async def _fetch_one(
     text = _extract_tweet_text(html if isinstance(html, str) else "")
     if not text:
         return f"public oEmbed returned no text for target status {status_id}"
-    return OEmbedPost(status_id=status_id, url=url, author=_author_hint(handles), text=text)
+    return OEmbedPost(status_id=status_id, url=url, author=_author_from_response(data), text=text)
+
+
+async def _get_oembed_response(client: httpx.AsyncClient, status_url: str) -> httpx.Response:
+    response = await client.get(
+        OEMBED_ENDPOINT,
+        params={"url": status_url, "omit_script": "1"},
+        follow_redirects=False,
+    )
+    for _ in range(OEMBED_REDIRECT_LIMIT):
+        if not response.is_redirect:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        redirect_url = response.url.join(location)
+        if redirect_url.scheme != "https" or redirect_url.host not in OEMBED_HOSTS:
+            raise httpx.RequestError("untrusted public oEmbed redirect", request=response.request)
+        response = await client.get(redirect_url, follow_redirects=False)
+    return response
 
 
 def _append_oembed_result(posts: list[OEmbedPost], warnings: list[str], result: OEmbedPost | str | None) -> None:
@@ -119,7 +140,19 @@ def _extract_tweet_text(html: str) -> str:
     return parser.text()
 
 
-def _author_hint(handles: list[str]) -> Optional[str]:
-    if not handles:
+def _author_from_response(data: object) -> Optional[str]:
+    if not isinstance(data, dict):
         return None
-    return str(handles[0]).lstrip("@")
+    author_url = data.get("author_url")
+    if not isinstance(author_url, str):
+        return None
+    parsed = urlparse(author_url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "x.com",
+        "www.x.com",
+        "twitter.com",
+        "www.twitter.com",
+    }:
+        return None
+    handle = parsed.path.strip("/").split("/", 1)[0]
+    return handle or None

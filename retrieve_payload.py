@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, Optional
 
 import mcp_posts
 import xai_responses
 from retrieve_schema import BACKEND, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
-from retrieve_text_parser import parse_raw_posts_from_text
-
-STATUS_RE = re.compile(r"/status/(\d+)")
+from retrieve_text_parser import parse_raw_posts_from_text, status_id_from_url
 
 
 def assemble_payload(result: xai_responses.ResponsesResult, metadata: Dict[str, Any], *, stage_name: str) -> Dict[str, Any]:
@@ -170,6 +167,8 @@ def target_fallback_query(status_ids: list[str], metadata: Dict[str, Any]) -> st
 
 def finalize_payload(payload: Dict[str, Any], metadata: Dict[str, Any]) -> None:
     target_status_ids = list(metadata.get("target_status_ids") or [])
+    if target_status_ids:
+        _retain_exact_targets(payload, set(target_status_ids))
     target_match = _target_match(payload["items"], target_status_ids)
     if target_status_ids:
         payload["target_match"] = target_match
@@ -207,10 +206,23 @@ def _post_to_item(post: Dict[str, Any], mode: str) -> Dict[str, Any]:
 
 
 def _status_id(url: Optional[str]) -> Optional[str]:
-    if not url:
-        return None
-    match = STATUS_RE.search(url)
-    return match.group(1) if match else None
+    return status_id_from_url(url)
+
+
+def _retain_exact_targets(payload: Dict[str, Any], target_status_ids: set[str]) -> None:
+    payload["items"] = [item for item in payload["items"] if str(item.get("id") or "") in target_status_ids]
+    payload["posts"] = [
+        post
+        for post in payload["posts"]
+        if isinstance(post, dict) and status_id_from_url(post.get("url")) in target_status_ids
+    ]
+    payload["sources"] = [
+        source
+        for source in payload["sources"]
+        if isinstance(source, dict)
+        and status_id_from_url(str(source.get("url") or source.get("title") or "")) in target_status_ids
+    ]
+    payload["groups"] = _groups(payload["items"])
 
 
 def _is_usable_item(item: Dict[str, Any]) -> bool:

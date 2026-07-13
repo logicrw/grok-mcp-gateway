@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 import config
 import mcp_posts
-from retrieve_schema import INTENTS, RETRIEVE_ARGUMENT_KEYS
+from retrieve_schema import INTENTS, RETRIEVE_ARGUMENT_KEYS, RETRIEVE_MODEL_MAX_CHARS
 from retrieve_text_parser import extract_status_targets
 
 
@@ -34,7 +34,7 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
         "sort": sort,
         "include_replies": include_replies,
         "include_reposts": include_reposts,
-        "model": arguments.get("model"),
+        "model": _clean_model(arguments),
     }
     if handles:
         posts_arguments["handles"] = handles
@@ -98,6 +98,20 @@ def _clean_model_policy(arguments: Dict[str, Any]) -> str:
     if policy not in {"auto", "stable_only", "raw_expanded"}:
         raise ValueError("model_policy must be one of auto, stable_only, raw_expanded")
     return policy
+
+
+def _clean_model(arguments: Dict[str, Any]) -> Optional[str]:
+    value = arguments.get("model")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("model must be a string")
+    model = value.strip()
+    if not model:
+        return None
+    if len(model) > RETRIEVE_MODEL_MAX_CHARS:
+        raise ValueError(f"model must be at most {RETRIEVE_MODEL_MAX_CHARS} characters")
+    return model
 
 
 def _clean_sort(arguments: Dict[str, Any], *, default: str) -> str:

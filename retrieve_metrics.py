@@ -27,7 +27,7 @@ def record_stage(
     reasoning_effort: str,
     duration_seconds: float,
 ) -> None:
-    key = (stage, model, status, reasoning_effort)
+    key = (stage, _model_role(stage, model), status, reasoning_effort)
     _stage_count[key] += 1
     _stage_duration[key] += max(0.0, duration_seconds)
 
@@ -41,7 +41,7 @@ def record_error(*, stage: str, kind: str) -> None:
 
 
 def record_usage(*, stage: str, model: str, reasoning_tokens: int, x_search_calls: int) -> None:
-    key = (stage, model)
+    key = (stage, _model_role(stage, model))
     _reasoning_tokens[key] += max(0, reasoning_tokens)
     _x_search_calls[key] += max(0, x_search_calls)
 
@@ -62,8 +62,8 @@ def metrics_lines() -> list[str]:
         ]
     )
     for key in sorted(_stage_count):
-        stage, model, status, effort = (_label(value) for value in key)
-        labels = f'stage="{stage}",model="{model}",status="{status}",reasoning_effort="{effort}"'
+        stage, model_role, status, effort = (_label(value) for value in key)
+        labels = f'stage="{stage}",model_role="{model_role}",status="{status}",reasoning_effort="{effort}"'
         lines.append(f"mcp_x_retrieve_stage_total{{{labels}}} {_stage_count[key]}")
         lines.append(f"mcp_x_retrieve_stage_duration_seconds_total{{{labels}}} {_stage_duration[key]}")
     lines.extend(
@@ -94,8 +94,18 @@ def _usage_lines(name: str, values: defaultdict[tuple[str, str], int]) -> list[s
         f"# HELP mcp_x_retrieve_{name}_total Parsed xAI Responses usage",
         f"# TYPE mcp_x_retrieve_{name}_total counter",
     ]
-    for (stage, model), count in sorted(values.items()):
+    for (stage, model_role), count in sorted(values.items()):
         lines.append(
-            f'mcp_x_retrieve_{name}_total{{stage="{_label(stage)}",model="{_label(model)}"}} {count}'
+            f'mcp_x_retrieve_{name}_total{{stage="{_label(stage)}",model_role="{_label(model_role)}"}} {count}'
         )
     return lines
+
+
+def _model_role(stage: str, model: str) -> str:
+    if stage == "raw_expansion":
+        return "raw"
+    if stage == "public_oembed":
+        return "public_oembed"
+    if model == "unknown":
+        return "unknown"
+    return "stable"

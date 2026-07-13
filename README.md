@@ -356,7 +356,7 @@ only need to choose one tool.
 | `include_reposts` | boolean | no | Whether reposts may be included when xAI can distinguish them. Defaults to `true`. |
 | `best_effort_filters` | object | no | Best-effort prompt filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. These are not official X API filters. |
 | `quality` | object | no | Optional quality gate: `min_items`, `require_status_url`, `require_original_text`, `allow_raw_expansion`. |
-| `model_policy` | string | no | `auto`, `stable_only`, or `raw_expanded`. Defaults to `auto`. |
+| `model_policy` | string | no | `auto`, `stable_only`, or `raw_expanded`. Defaults to `auto`. This controls Composer/raw expansion only; exact-target oEmbed and stable fallback remain enabled. |
 | `model` | string | no | xAI model for the stable MCP call. Defaults to `GROK_PROXY_RETRIEVE_MODEL`, then `GROK_PROXY_MCP_MODEL`, then `grok-4.5`. |
 
 `x_retrieve` requires `query` or `handles`. Screenshots are handled upstream:
@@ -378,7 +378,8 @@ includes `request.target_status_ids` and, when applicable, `target_match` with
 requested, matched, and missing IDs. If an explicit target is still missing
 after the stable stage, the gateway first tries concurrent public
 `publish.twitter.com/oembed` lookups for those exact IDs. Any remaining targets
-are sent through one batched Grok 4.5 exact-status fallback. Explicit targets
+are sent through one batched exact-status fallback using the active stable
+model (Grok 4.5 by default, or the resolved model override). Explicit targets
 never use Composer and never fall back one model call at a time.
 Latest-by-handle requests stay fast when the stable stage finds posts, but an
 empty latest-by-handle stable result is allowed to run one raw expansion pass.
@@ -698,8 +699,10 @@ available, the gateway reports an OAuth error and requires reauthorization.
 enabled MCP tools, removed legacy tool names, and stable/raw model IDs.
 `/health?deep=1` marks each model `listed`, `not_listed`, or `unknown` from the
 upstream model list; it does not infer entitlement from absence. `/metrics`
-adds final retrieval status, stage/model/status/reasoning effort, timeout and
-bounded error kinds, reasoning tokens, and server-side X Search calls. These
+adds final retrieval status, stage/model-role/status/reasoning effort, timeout
+and bounded error kinds, reasoning tokens, and server-side X Search calls.
+Model roles are the bounded `stable`, `raw`, `public_oembed`, and `unknown`
+labels; request-provided model names never become metric labels. These
 surfaces report gateway state only and cannot inspect a client's private
 `disabledTools` or schema cache.
 

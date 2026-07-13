@@ -6,7 +6,8 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from x_oembed import fetch_oembed_posts
+from retrieve_oembed import merge_oembed_posts
+from x_oembed import OEmbedPost, fetch_oembed_posts
 
 
 def test_fetch_oembed_posts_extracts_paragraph_text():
@@ -18,7 +19,11 @@ def test_fetch_oembed_posts_extracts_paragraph_text():
             "&mdash; xAI (@xai)"
             "</blockquote>"
         )
-        return httpx.Response(200, request=request, json={"html": html})
+        return httpx.Response(
+            200,
+            request=request,
+            json={"html": html, "author_url": "https://twitter.com/xai"},
+        )
 
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -62,3 +67,63 @@ def test_fetch_oembed_posts_reports_unavailable_status():
 
     assert result.posts == []
     assert result.warnings == ["public oEmbed unavailable for target status 2071385784154759468"]
+
+
+def test_fetch_oembed_posts_rejects_untrusted_redirect():
+    def handler(request):
+        return httpx.Response(302, request=request, headers={"Location": "https://example.com/oembed"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await fetch_oembed_posts(["2071385784154759468"], [], client=client)
+
+    result = asyncio.run(run())
+
+    assert result.posts == []
+    assert result.warnings == ["public oEmbed failed for target status 2071385784154759468"]
+
+
+def test_merge_oembed_preserves_metadata_and_deduplicates_by_status_id():
+    status_id = "2071385784154759468"
+    payload = {
+        "items": [
+            {
+                "id": status_id,
+                "url": f"https://x.com/xai/status/{status_id}",
+                "author": "verified_author",
+                "created_at": "2026-07-13T00:00:00Z",
+                "text": "",
+                "metrics": {"likes": 42},
+                "relation": "primary",
+                "confidence": "medium",
+                "warnings": ["existing warning"],
+                "citation_backed": False,
+            }
+        ],
+        "posts": [
+            {
+                "url": f"https://x.com/xai/status/{status_id}",
+                "author": "verified_author",
+                "created_at": "2026-07-13T00:00:00Z",
+                "text": "",
+                "metrics": {"likes": 42},
+            }
+        ],
+        "sources": [{"url": f"https://x.com/xai/status/{status_id}", "title": "stable"}],
+        "groups": {},
+        "source_extraction_status": "available",
+    }
+
+    merge_oembed_posts(
+        payload,
+        [OEmbedPost(status_id, f"https://x.com/i/status/{status_id}", None, "public embed text")],
+    )
+
+    assert len(payload["items"]) == 1
+    assert len(payload["posts"]) == 1
+    assert len(payload["sources"]) == 1
+    assert payload["items"][0]["author"] == "verified_author"
+    assert payload["items"][0]["created_at"] == "2026-07-13T00:00:00Z"
+    assert payload["items"][0]["metrics"] == {"likes": 42}
+    assert payload["items"][0]["warnings"] == ["existing warning"]
+    assert payload["items"][0]["text"] == "public embed text"

@@ -337,7 +337,7 @@ POST http://127.0.0.1:9996/mcp
 | `include_reposts` | boolean | 否 | xAI 能区分时是否允许包含转帖，默认 `true`。 |
 | `best_effort_filters` | object | 否 | best-effort prompt 过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。这不是官方 X API 过滤。 |
 | `quality` | object | 否 | 可选质量门槛：`min_items`、`require_status_url`、`require_original_text`、`allow_raw_expansion`。 |
-| `model_policy` | string | 否 | `auto`、`stable_only` 或 `raw_expanded`，默认 `auto`。 |
+| `model_policy` | string | 否 | `auto`、`stable_only` 或 `raw_expanded`，默认 `auto`。它只控制 Composer/raw expansion；明确目标的 oEmbed 和 stable fallback 始终保留。 |
 | `model` | string | 否 | stable MCP 调用使用的 xAI 模型，默认依次取 `GROK_PROXY_RETRIEVE_MODEL`、`GROK_PROXY_MCP_MODEL`、`grok-4.5`。 |
 
 `x_retrieve` 至少需要 `query` 或 `handles` 其中之一。截图场景由上游多模态模型先 OCR 或描述，再把文本放进 `query`；gateway 不接收图片 URL 或 base64。
@@ -355,7 +355,8 @@ raw expansion 会在 quality gate 判断需要更多候选时自动触发，例�
 `request.target_status_ids`，并在适用时包含 `target_match`，列出 requested、
 matched 和 missing ID。如果明确目标在 primary quality gate 之后仍然缺失，
 gateway 会先并发请求这些 exact ID 的公开 `publish.twitter.com/oembed`。仍然缺失的
-目标再进入一次批量 Grok 4.5 exact-status fallback。明确目标永远不走 Composer，也
+目标再进入一次批量 exact-status fallback，使用当前 active stable 模型（默认 Grok
+4.5，也可由模型配置覆盖）。明确目标永远不走 Composer，也
 不会按 ID 逐条串行调用模型。
 单账号最新帖场景在 stable stage 找到帖子时仍保持快速；如果 stable stage 返回空
 结果，则允许再跑一次 raw expansion。
@@ -661,8 +662,10 @@ sudo systemctl enable --now grok-mcp-gateway
 `/health` 还包含 `mcp` 对象，用于显示 gateway 当前的工具 allowlist、已启用 MCP
 工具、已移除旧工具名和 stable/raw 模型 ID。`/health?deep=1` 根据 upstream 模型
 列表把模型标成 `listed`、`not_listed` 或 `unknown`，不会把“未列出”误报成无权限。
-`/metrics` 增加最终检索状态、stage/model/status/reasoning effort、timeout、有限错误
-类型、reasoning tokens 和 server-side X Search 调用数。它们只反映 gateway 自身
+`/metrics` 增加最终检索状态、stage/model-role/status/reasoning effort、timeout、有限
+错误类型、reasoning tokens 和 server-side X Search 调用数。model role 只会是有界的
+`stable`、`raw`、`public_oembed` 或 `unknown`；请求传入的模型名不会成为指标标签。
+它们只反映 gateway 自身
 状态，不能读取客户端私有 `disabledTools` 或 schema cache。
 
 ## 安全说明
