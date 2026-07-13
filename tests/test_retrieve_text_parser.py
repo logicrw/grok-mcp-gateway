@@ -97,6 +97,11 @@ def test_raw_parser_rejects_x_url_embedded_in_another_uri():
         f"mailto:[source](https://x.com/xai/status/{status_id})",
         f"[source](URL=https://x.com/xai/status/{status_id})",
         f"[source](source:https://x.com/xai/status/{status_id})",
+        f"javascript:(([source](https://x.com/xai/status/{status_id})))",
+        f"https://evil.example/(([source](https://x.com/xai/status/{status_id})))",
+        f'evil""[source](https://x.com/xai/status/{status_id})',
+        f"[source](https://x.com/xai/status/{status_id}))javascript:alert(1)",
+        f"([source](https://x.com/xai/status/{status_id})))evil",
     ]
 
     for token in misleading_tokens:
@@ -132,7 +137,11 @@ def test_raw_parser_accepts_standard_url_wrappers():
         f"[source]({url})",
         f"[X post]({url})",
         f'[source]({url} "X post")',
+        f'[source](<{url}> "X post")',
         f"([source]({url}))",
+        f"*[source]({url})*",
+        f"_[source]({url})_",
+        f"[source]({url})。这是原帖。",
         f"URL={url}",
         f"URL：{url}",
     ]

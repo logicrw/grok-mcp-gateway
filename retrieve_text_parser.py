@@ -12,6 +12,9 @@ MARKDOWN_LINK_RE = re.compile(
 )
 URL_LEADING_PUNCTUATION = "([{<\"'`“‘（【《「『"
 URL_TRAILING_PUNCTUATION = ".,;:!?)]}>\"'`，。；：！？、…）》】」』”’"
+MARKDOWN_OPENING_WRAPPERS = URL_LEADING_PUNCTUATION + "*_"
+MARKDOWN_CLOSING_WRAPPERS = ")]}>\"'`）》】」』”’*_"
+MARKDOWN_SENTENCE_DELIMITERS = ".,;:!?，。；：！？、…"
 URL_TEXT_PREFIXES = (
     "url:",
     "url=",
@@ -132,7 +135,7 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
         if not _has_markdown_boundaries(text, markdown_match.start(), markdown_match.end()):
             continue
         markdown_spans.append(markdown_match.span())
-        url = markdown_match.group("url")
+        url = _markdown_destination(markdown_match.group("url"))
         status_id = status_id_from_url(url)
         if status_id:
             matches.append((markdown_match.start("url"), url, status_id))
@@ -147,20 +150,26 @@ def _status_urls(text: str) -> list[tuple[int, str, str]]:
 
 
 def _has_markdown_boundaries(text: str, start: int, end: int) -> bool:
-    if start:
-        previous = text[start - 1]
-        if previous.isspace():
-            pass
-        elif previous in URL_LEADING_PUNCTUATION:
-            if start > 1 and not text[start - 2].isspace() and text[start - 2] not in URL_LEADING_PUNCTUATION:
-                return False
-        else:
-            return False
-    if end < len(text):
-        following = text[end]
-        if not following.isspace() and following not in URL_TRAILING_PUNCTUATION:
-            return False
-    return True
+    left = start
+    while left and text[left - 1] in MARKDOWN_OPENING_WRAPPERS:
+        left -= 1
+    if left and not text[left - 1].isspace():
+        return False
+
+    right = end
+    while right < len(text) and text[right] in MARKDOWN_CLOSING_WRAPPERS:
+        right += 1
+    return (
+        right == len(text)
+        or text[right].isspace()
+        or text[right] in MARKDOWN_SENTENCE_DELIMITERS
+    )
+
+
+def _markdown_destination(raw_destination: str) -> str:
+    if raw_destination.startswith("<") and raw_destination.endswith(">"):
+        return raw_destination[1:-1]
+    return raw_destination
 
 
 def _clean_url_token(raw_token: str) -> str:
