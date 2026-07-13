@@ -80,3 +80,36 @@ def test_raw_parser_accepts_controlled_suffix_and_query_parameters():
     posts = parse_raw_posts_from_text(f"Main Post: {url}\nContent: media post", {"count": 3})
 
     assert posts[0]["url"] == url
+
+
+def test_raw_parser_rejects_x_url_embedded_in_another_uri():
+    status_id = "2071385784154759468"
+    misleading_tokens = [
+        f"https://evil.example/@x.com/xai/status/{status_id}",
+        f"javascript:x.com/xai/status/{status_id}",
+        f"mailto:x.com/xai/status/{status_id}",
+        f"data:text/plain,x.com/xai/status/{status_id}",
+        f"https://evil.example@x.com/xai/status/{status_id}",
+    ]
+
+    for token in misleading_tokens:
+        assert parse_raw_posts_from_text(f"Main Post: {token}", {"count": 3}) == []
+
+
+def test_raw_parser_accepts_wrapped_url_with_chinese_punctuation():
+    status_id = "2071385784154759468"
+    url = f"https://x.com/xai/status/{status_id}"
+    raw_values = [
+        f"原文：{url}。这是目标帖。",
+        f"原文：{url}，这是目标帖。",
+        f"“{url}”",
+        f"‘{url}’",
+        f"{url}、",
+        f"{url}……",
+        f"（{url}）。",
+    ]
+
+    for raw in raw_values:
+        posts = parse_raw_posts_from_text(raw, {"count": 3})
+
+        assert posts[0]["url"] == url

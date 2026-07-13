@@ -5,11 +5,22 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 STATUS_URL_TOKEN_RE = re.compile(
-    r"(?<![/A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?(?:x|twitter)\.com/"
-    r"[^\s<>\"']+",
-    re.IGNORECASE,
+    r"\S+",
 )
-URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）》】」』"
+URL_LEADING_PUNCTUATION = "([{<\"'“‘（【《「『"
+URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？、…）》】」』”’"
+URL_TEXT_PREFIXES = (
+    "url:",
+    "post:",
+    "source:",
+    "原文：",
+    "原文:",
+    "原帖：",
+    "原帖:",
+    "链接：",
+    "链接:",
+)
+URL_CJK_DELIMITERS = "，。；：！？、…”’"
 STATUS_PATH_RE = re.compile(
     r"^/(?:[A-Za-z0-9_]{1,15}/status|i/web/status)/(\d{15,20})(?:/(?:photo|video)/\d+)?/?$",
     re.IGNORECASE,
@@ -89,8 +100,19 @@ def parse_raw_posts_from_text(text: str, metadata: Dict[str, Any]) -> list[Dict[
 def status_id_from_url(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
-    parsed = urlparse(url if "://" in url else f"https://{url}")
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in STATUS_HOSTS:
+    try:
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        hostname = parsed.hostname
+        username = parsed.username
+        password = parsed.password
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or hostname not in STATUS_HOSTS
+        or username is not None
+        or password is not None
+    ):
         return None
     match = STATUS_PATH_RE.match(parsed.path)
     return match.group(1) if match else None
@@ -99,11 +121,24 @@ def status_id_from_url(url: Optional[str]) -> Optional[str]:
 def _status_urls(text: str) -> list[tuple[int, str, str]]:
     matches: list[tuple[int, str, str]] = []
     for match in STATUS_URL_TOKEN_RE.finditer(text):
-        url = match.group(0).rstrip(URL_TRAILING_PUNCTUATION)
+        url = _clean_url_token(match.group(0))
         status_id = status_id_from_url(url)
         if status_id:
             matches.append((match.start(), url, status_id))
     return matches
+
+
+def _clean_url_token(raw_token: str) -> str:
+    token = raw_token.lstrip(URL_LEADING_PUNCTUATION)
+    lowered = token.lower()
+    for prefix in URL_TEXT_PREFIXES:
+        if lowered.startswith(prefix):
+            token = token[len(prefix) :].lstrip(URL_LEADING_PUNCTUATION)
+            break
+    delimiter_positions = [token.find(delimiter) for delimiter in URL_CJK_DELIMITERS if delimiter in token]
+    if delimiter_positions:
+        token = token[: min(delimiter_positions)]
+    return token.rstrip(URL_TRAILING_PUNCTUATION)
 
 
 def _section_for_status(text: str, status_id: str) -> str:
