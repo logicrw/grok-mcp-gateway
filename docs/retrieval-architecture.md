@@ -2,6 +2,24 @@
 
 `x_retrieve` is the only public MCP retrieval tool. The gateway keeps model-dependent behavior behind one deterministic controller so model upgrades do not change the client contract.
 
+## Ownership and non-goals
+
+The gateway owns one bounded retrieval request: deterministic route selection,
+model calls, normalization, target validation, recovery, and telemetry. The
+calling Agent owns research planning, query decomposition, synthesis, and the
+decision to call `x_retrieve` again. This separation keeps the MCP contract
+small while allowing stronger Agents to use it more effectively.
+
+The project intentionally remains independent of the official X API. It will
+not embed an official X API provider, `xurl`, posting/account actions, or X API
+credentials. A client may configure unrelated official tools separately, but
+they do not become a gateway backend.
+
+Persistent databases or caches, learned routing, in-gateway multi-query
+planning, vector stores, and multi-agent research frameworks are also non-goals
+until repeated production traces show a specific failure that the current
+controller cannot solve more simply.
+
 ## Request paths
 
 | Request shape | Stable stage | Deterministic recovery | Optional expansion |
@@ -43,12 +61,54 @@ Explicit targets are capped before orchestration and the cap is returned in `war
 
 `/metrics` records final status, stage/model-role/status/reasoning effort, timeout boundary, bounded error kind, reasoning tokens, and server-side X Search calls. Model roles are limited to `stable`, `raw`, `public_oembed`, and `unknown`; exact model IDs remain visible through health and response diagnostics. No response body, prompt, OAuth value, request-provided model name, or user content is used as a metric label.
 
+### Local upgrade synchronization
+
+The runtime sources of truth are the checked-out code used by the resident
+service, the LaunchAgent or systemd service definition, `/health`, and MCP
+`tools/list`. Client-side `x_retrieve.json` files are derived schema caches and
+may remain stale until that client reconnects.
+
+After changing a model default, routing, prompt, or fallback:
+
+1. Restart the resident service and confirm it is running from the intended
+   checkout and virtual environment.
+2. Run `scripts/check_mcp_gateway.sh` and inspect `/health?deep=1`.
+3. Confirm `tools/list` advertises the active model and current input schema.
+4. Reconnect clients with stale schema caches; do not hand-maintain those cache
+   files as configuration.
+5. Run one stable retrieval and, when Composer behavior changed, one forced
+   `model_policy=raw_expanded` retrieval. A successful raw stage proves current
+   runtime access; `not_listed` or a failed stage alone does not prove an
+   entitlement problem. Classify failures using the bounded error kind and
+   upstream status.
+6. Inspect bounded metrics and logs without recording prompts, post bodies, or
+   credentials.
+
 ## Model upgrade protocol
 
-For each new stable or raw model:
+Run this protocol only when the stable/raw model, retrieval prompt, routing,
+quality gate, or fallback behavior changes. Ordinary refactors, tests, and
+documentation edits use the normal unit/contract suite and do not require a
+live model comparison.
+
+For each affected model role:
 
 1. Run the same de-identified latest, exact-target, research, source, and reaction cases.
 2. Compare target match, usable status URLs, original text, JSON reliability, latency, timeout rate, reasoning tokens, and X Search calls.
 3. Keep deterministic routing, quality gates, and oEmbed unchanged during the comparison.
 4. Change one model role at a time and retain environment overrides for rollback.
 5. Remove Composer only when stable-only retrieval consistently matches its useful yield without increasing empty or no-match results.
+
+## Repository evidence policy
+
+Keep durable behavior in production code, focused regression tests, current
+architecture documentation, and de-identified evaluation summaries. Before
+removing an exploratory artifact, distill any unique decision, failure mode,
+metric, or acceptance criterion into one of those maintained surfaces.
+
+Do not commit raw Twitter/X exports, local Agent histories, model response
+bodies, OAuth material, personal prompts, one-off analysis scripts, debug
+journals, caches, or reports that can be regenerated. These artifacts are large,
+privacy-sensitive, time-bound, and easily mistaken for maintained product
+truth. Their useful aggregate evidence belongs in the evaluation baseline;
+their reproducible behavior belongs in tests.

@@ -44,9 +44,9 @@ that AI clients can use in two ways:
 
 Important boundary: `x_retrieve` is a structured best-effort retrieval tool
 over xAI `x_search`. It is not an official X API timeline endpoint, does not
-provide official pagination, and does not guarantee exact metrics. Use the
-official X API or official X MCP server for API-grade timelines, posting,
-compliance, or bulk data access.
+provide official pagination, and does not guarantee exact metrics. Official X
+API tools, when needed, stay separate at the client layer; this gateway does
+not embed, proxy, or depend on an official X API provider.
 
 No X Developer API credentials are required for this gateway. It uses the
 Hermes/xAI OAuth session and xAI's `x_search` backend instead.
@@ -86,10 +86,10 @@ server for querying documentation. Grok MCP Gateway is narrower: it keeps the
 Hermes/xAI OAuth model gateway and exposes one focused MCP tool backed by xAI
 Responses API search.
 
-Run the official X MCP server alongside this gateway if you need broader X API
-actions such as account or posting workflows. Keep this gateway for local Grok
-model access and OAuth-backed X Search that non-Grok agents can call through
-their MCP tool layer.
+If a client needs broader X API actions such as account or posting workflows,
+configure an official X tool independently in that client. It remains outside
+this gateway. Keep this project focused on local Grok model access and
+OAuth-backed X Search that non-Grok agents can call through their MCP layer.
 
 ### Relationship to `xurl`
 
@@ -98,11 +98,10 @@ X API CLI with a Hermes skill. That route is stronger when you have an X
 Developer app and need API-grade actions such as posting, bookmarks, timelines,
 media upload, likes, or list management.
 
-Grok MCP Gateway intentionally keeps a different default: no X Developer API
+Grok MCP Gateway intentionally takes a different path: no X Developer API
 credentials are required. It uses Hermes/xAI OAuth and xAI `x_search` for local
-agent search. If this project adds `xurl` support later, it should be an
-optional extension with write actions disabled by default, not a replacement for
-the current OAuth-backed search gateway.
+agent search. `xurl` remains a separate client-side tool and is not a planned
+provider inside this repository.
 
 ## What This Is / Is Not
 
@@ -117,6 +116,7 @@ This project is:
 This project is not:
 
 - a general MCP router, MCP marketplace, or remote-tool aggregator;
+- an official X API provider, adapter, or proxy;
 - a replacement for the official X API MCP server when you need posting,
   account management, official timelines, pagination, metrics, compliance
   archives, or broader X API actions;
@@ -136,6 +136,13 @@ Preview means:
 - `x_retrieve` is generated retrieval, not an official X timeline;
 - MCP compatibility is verified only for clients listed in the matrix below;
 - tool schemas may still change before a stable release.
+
+## Architecture and Evaluation
+
+- [Current X retrieval architecture](docs/retrieval-architecture.md): routing,
+  deadlines, trust boundaries, local upgrade checks, and project non-goals.
+- [Model evaluation baseline](docs/model-evaluation-2026-06-25.md): retained
+  de-identified cases and Grok 4.5 live validation.
 
 ## Core Features
 
@@ -758,13 +765,16 @@ Common causes:
   a stale schema cache still shows `grok_mcp_gateway/x_retrieve.json`.
 - xAI OAuth needs Hermes re-authentication.
 - The account does not have access to the requested model or X Search feature.
-- `allowed_x_handles` is too restrictive.
 - The client is calling `/mcp` with GET instead of POST.
 
 If the client says `tool x_retrieve is not enabled for server
 grok_mcp_gateway`, first check the client-side MCP config and remove
 `x_retrieve` from `disabledTools`. That error can be raised before the request
 reaches this gateway.
+
+Client schema files are derived caches, not gateway configuration. Reconnect or
+restart the affected client so it fetches a fresh `tools/list`; do not use a
+cached `x_retrieve.json` file as evidence of the running model or tool schema.
 
 ### Base URL confusion
 

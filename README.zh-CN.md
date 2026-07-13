@@ -44,7 +44,8 @@ Grok MCP Gateway 会把 Hermes Agent 里的 xAI OAuth 会话变成本地 gateway
 
 重要边界：`x_retrieve` 是基于 xAI `x_search` 的结构化 best-effort 检索工具。
 它不是官方 X API timeline endpoint，不提供官方分页，也不保证互动指标完全准确。
-需要 API 级 timeline、发帖、合规归档或批量数据时，应使用官方 X API 或官方 X MCP server。
+确实需要官方 X API 时，应由客户端独立配置对应工具；本 gateway 不内置、不代理、
+也不依赖任何官方 X API Provider。
 
 这个 gateway 不需要 X Developer API credentials。它使用的是 Hermes/xAI OAuth
 会话和 xAI 的 `x_search` backend。
@@ -82,9 +83,9 @@ X API 操作的 X API MCP server，以及用于查询文档的 X Docs MCP server
 MCP Gateway 更窄：它保留 Hermes/xAI OAuth 的 Grok 模型 gateway，并通过 xAI
 Responses API 暴露一个聚焦的 X 检索 MCP 工具。
 
-如果你需要更完整的 X API 操作，例如账号或发帖工作流，可以把官方 X MCP 和本
-项目同时运行。本项目的定位是本地 Grok 模型接入，以及让非 Grok Agent 通过
-MCP 工具层调用 OAuth-backed X Search。
+如果客户端需要更完整的 X API 操作，例如账号或发帖工作流，应在该客户端独立
+配置官方 X 工具；它不进入本 gateway。本项目只负责本地 Grok 模型接入，以及让
+非 Grok Agent 通过 MCP 工具层调用 OAuth-backed X Search。
 
 ### 和 `xurl` 的关系
 
@@ -92,10 +93,9 @@ X Developers 也维护 [`xurl`](https://docs.x.com/tools/xurl)，这是官方 X 
 CLI，并且有配套 Hermes skill。如果你有 X Developer app，并且需要发帖、书签、
 timeline、媒体上传、点赞或列表管理等 API 级操作，`xurl` 路线更强。
 
-Grok MCP Gateway 默认走另一条路线：不需要 X Developer API credentials。它复用
-Hermes/xAI OAuth，并通过 xAI `x_search` 给本地 Agent 提供搜索能力。如果未来接入
-`xurl`，也应该作为可选扩展，并且默认关闭写操作，而不是替代当前的 OAuth-backed
-search gateway。
+Grok MCP Gateway 走的是另一条路线：不需要 X Developer API credentials。它复用
+Hermes/xAI OAuth，并通过 xAI `x_search` 给本地 Agent 提供搜索能力。`xurl` 始终是
+客户端侧的独立工具，不是本仓库计划接入的 Provider。
 
 ## 是什么 / 不是什么
 
@@ -110,8 +110,9 @@ search gateway。
 这个项目不是：
 
 - 通用 MCP router、MCP marketplace，或远程工具聚合器；
+- 官方 X API Provider、adapter 或 proxy；
 - 官方 X API MCP server 的替代品。如果你需要发帖、账号管理、官方 timeline、
-  分页、指标、合规归档或更完整的 X API 操作，应同时运行官方 X MCP；
+  分页、指标、合规归档或更完整的 X API 操作，应在客户端独立配置官方 X 工具；
 - Node.js、npm、Express、Docker 或 Heroku 模板；
 - 让所有模型“原生懂 X”的魔法。非 Grok 模型只有在客户端主动调用 MCP 工具时
   才能搜索 X。
@@ -127,6 +128,13 @@ Preview 表示：
 - `x_retrieve` 是 generated retrieval，不是官方 X timeline；
 - MCP 兼容性只对下方矩阵里的客户端声明验证状态；
 - stable release 前 tool schema 仍可能变化。
+
+## 架构与评测文档
+
+- [当前 X 检索架构](docs/retrieval-architecture.md)：路由、deadline、信任边界、
+  本机升级检查和项目非目标。
+- [模型评测基线](docs/model-evaluation-2026-06-25.md)：保留的去标识案例矩阵和
+  Grok 4.5 实地验证。
 
 ## 核心能力
 
@@ -716,12 +724,15 @@ curl -sS http://127.0.0.1:9996/metrics | rg mcp_x_retrieve
   仍然显示 `grok_mcp_gateway/x_retrieve.json` 存在。
 - xAI OAuth 需要重新在 Hermes 授权。
 - 当前账号没有目标模型或 X Search 权益。
-- `allowed_x_handles` 限制太窄。
 - 客户端用 GET 调 `/mcp`，而不是 POST。
 
 如果客户端报 `tool x_retrieve is not enabled for server grok_mcp_gateway`，
 先检查客户端 MCP 配置并移除 `disabledTools` 里的 `x_retrieve`。这个错误可能在
 请求到达 gateway 前就由客户端抛出。
+
+客户端里的 schema 文件只是派生缓存，不是 gateway 配置源。应重连或重启对应
+客户端，让它重新获取 `tools/list`；不要用缓存的 `x_retrieve.json` 判断运行中的
+模型或工具 schema。
 
 ### Base URL 混淆
 

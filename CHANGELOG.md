@@ -68,6 +68,12 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   normal startup exceptions instead of calling `sys.exit()`.
 - Update README and service examples to make the official X API boundary and
   LaunchAgent/systemd environment requirements explicit.
+- Clarify the long-term thin-gateway boundary: official X API providers,
+  persistent databases/caches, learned routing, and in-gateway multi-query
+  planning remain outside the project unless production evidence changes that
+  decision.
+- Document Agent-versus-gateway ownership, on-demand model evaluation, local
+  schema-cache refresh, and the repository evidence-retention policy.
 - Keep date-only `to_date` values unchanged to match xAI's inclusive date-range
   documentation.
 - Make `x_posts.v1` contract fields gateway-owned instead of trusting generated
