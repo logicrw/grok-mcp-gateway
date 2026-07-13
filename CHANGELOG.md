@@ -74,14 +74,15 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   model JSON for `request`, `filter_reliability`, `backend`, or
   `timeline_verified`.
 - Return pure serialized JSON in MCP text content for post-extraction results.
-- Preserve short stage diagnostics when an upstream raw/fallback stage returns
-  non-JSON text with no usable posts, instead of silently dropping the parse
-  failure context.
+- Preserve short stage diagnostics for general retrieval when an upstream raw
+  stage returns non-JSON text with no usable posts. Exact-target responses omit
+  unstructured raw text and previews so nearby posts cannot cross that boundary.
 - Return `x_retrieve.v1` structured error payloads for runtime retrieval
   failures, so agents do not receive bare non-JSON `x_retrieve failed` text.
 - Keep Composer behind the general quality gate and remove it from the exact
-  target path. Exact targets now use Grok 4.5, concurrent oEmbed, and at most one
-  batched Grok 4.5 fallback.
+  target path. Exact targets now use the active stable model (Grok 4.5 by
+  default), concurrent oEmbed, and at most one batched fallback using that same
+  resolved stable model.
 - Extend shallow/deep health with active stable/raw model IDs and upstream model
   listing status without treating an unlisted model as a proven entitlement
   failure.
