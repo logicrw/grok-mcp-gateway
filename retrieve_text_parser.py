@@ -8,11 +8,11 @@ STATUS_URL_TOKEN_RE = re.compile(
     r"\S+",
 )
 MARKDOWN_LINK_RE = re.compile(
-    r"\[[^\]\n]*\]\(\s*(?P<url>\S+?)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
+    r"\[[^\]\n]*\]\(\s*(?P<url>\S+?)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)",
 )
 URL_LEADING_PUNCTUATION = "([{<\"'`“‘（【《「『"
 URL_TRAILING_PUNCTUATION = ".,;:!?)]}>\"'`，。；：！？、…）》】」』”’"
-MARKDOWN_OPENING_WRAPPERS = URL_LEADING_PUNCTUATION + "*_"
+MARKDOWN_OPENING_WRAPPERS = URL_LEADING_PUNCTUATION + "*>_"
 MARKDOWN_CLOSING_WRAPPERS = ")]}>\"'`）》】」』”’*_"
 MARKDOWN_SENTENCE_DELIMITERS = ".,;:!?，。；：！？、…"
 URL_TEXT_PREFIXES = (
