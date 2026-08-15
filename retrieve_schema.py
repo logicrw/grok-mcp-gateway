@@ -35,7 +35,57 @@ RETRIEVE_ARGUMENT_KEYS = {
     "model",
 }
 INTENTS = {"auto", "research", "posts", "source_discovery", "reaction_tracking", "verify_claim"}
-MODES = {"latest_by_handle", "structured_posts", "semantic_research", "source_discovery", "reaction_tracking"}
+MODES = {
+    "latest_by_handle",
+    "structured_posts",
+    "semantic_research",
+    "source_discovery",
+    "reaction_tracking",
+    "claim_verification",
+}
+
+X_POSTS_STAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["warnings", "posts"],
+    "additionalProperties": False,
+    "properties": {
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "posts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "created_at",
+                    "author",
+                    "text",
+                    "url",
+                    "metrics",
+                    "truncated",
+                ],
+                "additionalProperties": False,
+                "properties": {
+                    "created_at": {"type": ["string", "null"]},
+                    "author": {"type": ["string", "null"]},
+                    "text": {"type": "string"},
+                    "url": {"type": ["string", "null"]},
+                    "metrics": {
+                        "type": "object",
+                        "required": ["views", "likes", "reposts", "replies"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "views": {"type": ["integer", "null"]},
+                            "likes": {"type": ["integer", "null"]},
+                            "reposts": {"type": ["integer", "null"]},
+                            "replies": {"type": ["integer", "null"]},
+                        },
+                    },
+                    "truncated": {"type": "boolean"},
+                },
+            },
+        },
+    },
+}
+
 
 
 def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:

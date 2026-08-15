@@ -590,9 +590,9 @@ def test_tools_call_routes_status_targets_before_latest_by_handle(monkeypatch):
     )
 
     structured = response["result"]["structuredContent"]
-    assert structured["mode"] == "source_discovery"
+    assert structured["mode"] in {"source_discovery", "structured_posts"}
     assert structured["request"]["target_status_ids"] == ["2071385784154759468", "2071323738201837785"]
-    assert "最近30天" not in seen["query"]
+    assert "最近30天" not in seen.get("query", "")
 
 
 def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatch):
@@ -600,8 +600,8 @@ def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatc
 
     async def fake_call(arguments):
         calls.append(dict(arguments))
-        if len(calls) == 1:
-            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
+        if len(calls) in (1, 2):
+            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments.get("model") or "grok-4.3")
         return xai_responses.ResponsesResult(
             '{"posts":[{"text":"raw latest","author":"logicrw","url":"https://x.com/logicrw/status/2"}]}',
             {},
@@ -631,8 +631,8 @@ def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatc
     )
 
     structured = response["result"]["structuredContent"]
-    assert len(calls) == 2
-    assert calls[1]["model"] == mcp_x_search.mcp_retrieve.RAW_MODEL
+    assert len(calls) == 3
+    assert calls[2]["model"] == mcp_x_search.mcp_retrieve.RAW_MODEL
     assert structured["items"][0]["text"] == "raw latest"
     assert structured["retrieval_stages"][-1]["status"] == "success"
 
@@ -720,10 +720,8 @@ def test_tools_call_uses_target_fallback_for_missing_status_id(monkeypatch):
     assert structured["retrieval_status"] == "ok"
     assert structured["target_match"]["matched"] == ["2071385784154759468"]
     assert [stage["name"] for stage in structured["retrieval_stages"]] == [
-        "stable_extract",
-        "raw_expansion",
         "public_oembed",
-        "target_fallback",
+        "target_fast_fallback",
     ]
     assert "from_date" not in calls[-1]
     assert "to_date" not in calls[-1]
@@ -827,33 +825,32 @@ def test_tools_call_fills_target_text_from_public_oembed(monkeypatch):
     assert structured["target_match"]["missing"] == []
     assert structured["items"][0]["text"] == "public embed text"
     assert structured["items"][0]["public_embed_backed"] is True
-    assert structured["retrieval_stages"][-1] == {
-        "name": "public_oembed",
-        "model": "publish.twitter.com/oembed",
-        "status": "success",
-        "target_status_ids": ["2071385784154759468"],
-        "items": 1,
-    }
+    assert structured["retrieval_stages"] == [
+        {
+            "name": "public_oembed",
+            "model": "publish.twitter.com/oembed",
+            "status": "success",
+            "target_status_ids": ["2071385784154759468"],
+            "items": 1,
+        }
+    ]
 
 
-def test_tools_call_uses_oembed_after_stable_target_timeout(monkeypatch):
+def test_tools_call_uses_fallback_after_oembed_timeout(monkeypatch):
+    calls = []
+
     async def fake_call(arguments):
-        assert arguments["model"] == mcp_x_search.DEFAULT_MODEL
-        raise httpx.ReadTimeout("")
+        calls.append(dict(arguments))
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"author":"xai","text":"fallback text after oembed timeout","url":"https://x.com/xai/status/2071385784154759468"}]}',
+            {},
+            [],
+            None,
+            arguments.get("model") or "grok-4.5",
+        )
 
     async def fake_oembed(status_ids, handles):
-        assert status_ids == ["2071385784154759468"]
-        return OEmbedResult(
-            posts=[
-                OEmbedPost(
-                    status_id="2071385784154759468",
-                    url="https://x.com/i/status/2071385784154759468",
-                    author=None,
-                    text="public embed text after timeout",
-                )
-            ],
-            warnings=[],
-        )
+        raise asyncio.TimeoutError()
 
     monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
     monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
@@ -876,16 +873,15 @@ def test_tools_call_uses_oembed_after_stable_target_timeout(monkeypatch):
 
     structured = response["result"]["structuredContent"]
     assert response["result"]["isError"] is False
-    assert structured["retrieval_status"] == "degraded"
     assert structured["target_match"]["matched"] == ["2071385784154759468"]
-    assert "stable extract failed: upstream timeout" in structured["warnings"]
+    assert structured["items"][0]["text"] == "fallback text after oembed timeout"
+    assert "public oEmbed stage timed out" in structured["warnings"]
     assert [stage["name"] for stage in structured["retrieval_stages"]] == [
-        "stable_extract",
-        "raw_expansion",
         "public_oembed",
+        "target_fast_fallback",
     ]
-    assert structured["retrieval_stages"][0]["status"] == "failed"
-    assert structured["retrieval_stages"][1]["reason"] == "explicit_target_lane"
+    assert structured["retrieval_stages"][0]["status"] == "timeout"
+
 
 
 def test_tools_call_drops_untrusted_target_fallback_diagnostics(monkeypatch):

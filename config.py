@@ -116,3 +116,28 @@ GROK_PROXY_RETRIEVE_MAX_TARGETS: int = _env_int(
 GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY: int = _env_int(
     "GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY", 3, minimum=1, maximum=10
 )
+
+# v2.1 Adaptive routing and execution lane configuration
+GROK_PROXY_FAST_MODEL: str = (
+    os.getenv("GROK_PROXY_FAST_MODEL", "grok-4.20-0309-non-reasoning").strip()
+    or "grok-4.20-0309-non-reasoning"
+)
+GROK_PROXY_ENABLE_AUTO_TIERING: bool = _env_bool("GROK_PROXY_ENABLE_AUTO_TIERING", True)
+GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS", 15.0, minimum=5.0, maximum=60.0
+)
+GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS", 60.0, minimum=5.0, maximum=120.0
+)
+
+GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS: float = _env_float(
+    "GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS", 35.0, minimum=10.0, maximum=120.0
+)
+GROK_PROXY_FALLBACK_RESERVE_SECONDS: float = _env_float(
+    "GROK_PROXY_FALLBACK_RESERVE_SECONDS", 8.0, minimum=2.0, maximum=30.0
+)
+GROK_PROXY_FAST_MAX_TURNS: int = _env_int("GROK_PROXY_FAST_MAX_TURNS", 2, minimum=1, maximum=5)
+GROK_PROXY_SMART_MAX_TURNS: int = _env_int("GROK_PROXY_SMART_MAX_TURNS", 3, minimum=1, maximum=10)
+GROK_PROXY_STORE_RESPONSES: bool = _env_bool("GROK_PROXY_STORE_RESPONSES", False)
+
+

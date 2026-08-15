@@ -477,13 +477,31 @@ async def rehydrate_from_hermes(previous_state: Optional[Dict[str, Any]] = None)
     return rehydrated
 
 
-async def get_access_token(*, force_refresh: bool = False) -> str:
-    """Return a valid access_token, refreshing if needed (async-safe)."""
+async def get_access_token(
+    *,
+    force_refresh: bool = False,
+    stale_access_token: Optional[str] = None,
+) -> str:
+    """Return a valid access_token, refreshing if needed (async-safe).
+
+    If force_refresh is True and stale_access_token is provided, another
+    coroutine that already refreshed the token will cause this call to return
+    the new token without issuing a redundant upstream OAuth refresh.
+    """
     state = await read_local_state()
     access_token = str(state.get("access_token") or "").strip()
 
     if not access_token:
         raise RuntimeError("No access_token available.")
+
+    if (
+        force_refresh
+        and stale_access_token
+        and access_token
+        and access_token != stale_access_token
+        and not _is_expiring(access_token, REFRESH_SKEW_SECONDS)
+    ):
+        return access_token
 
     should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
     if should_refresh:
@@ -491,6 +509,16 @@ async def get_access_token(*, force_refresh: bool = False) -> str:
             # Re-read under lock in case another coroutine already refreshed
             state = await read_local_state()
             access_token = str(state.get("access_token") or "").strip()
+
+            if (
+                force_refresh
+                and stale_access_token
+                and access_token
+                and access_token != stale_access_token
+                and not _is_expiring(access_token, REFRESH_SKEW_SECONDS)
+            ):
+                return access_token
+
             should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
             if should_refresh:
                 state = await refresh_access_token(state)
@@ -515,13 +543,18 @@ async def get_auth_headers() -> Dict[str, str]:
     return context["headers"]
 
 
-async def get_auth_context(*, force_refresh: bool = False) -> Dict[str, Any]:
+async def get_auth_context(
+    *,
+    force_refresh: bool = False,
+    stale_access_token: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return xAI auth headers plus the credential source used."""
     if force_refresh:
-        token = await get_access_token(force_refresh=True)
+        token = await get_access_token(force_refresh=True, stale_access_token=stale_access_token)
     else:
         token = await get_access_token()
     return {
         "headers": {"Authorization": f"Bearer {token}"},
         "credential_source": "xai-oauth",
     }
+

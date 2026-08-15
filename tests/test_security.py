@@ -513,7 +513,7 @@ def test_health_reports_mcp_tool_status(monkeypatch):
     assert payload["mcp"]["tool_allowlist"] == ["x_retrieve"]
     assert payload["mcp"]["enabled_tools"] == ["x_retrieve"]
     assert payload["mcp"]["removed_tools"] == ["x_search", "x_latest_posts", "x_posts"]
-    assert payload["mcp"]["models"]["stable"] == {"id": "grok-4.5", "listing": "unknown"}
+    assert payload["mcp"]["models"]["stable"] == {"id": "grok-4.6", "listing": "unknown"}
     assert payload["mcp"]["models"]["raw"]["listing"] == "unknown"
 
 
@@ -527,7 +527,8 @@ def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeyp
     class FakeClient:
         async def get(self, url, **kwargs):
             request = httpx.Request("GET", url)
-            return httpx.Response(200, request=request, json={"data": [{"id": "grok-4.5"}]})
+            return httpx.Response(200, request=request, json={"data": [{"id": "grok-4.6"}]})
+
 
         async def aclose(self):
             return None

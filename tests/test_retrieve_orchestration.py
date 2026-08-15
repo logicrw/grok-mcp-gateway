@@ -34,8 +34,6 @@ def test_exact_targets_use_one_batched_model_fallback(monkeypatch):
 
     async def fake_search(arguments):
         calls.append(dict(arguments))
-        if len(calls) == 1:
-            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments["model"])
         return xai_responses.ResponsesResult(
             '{"posts":['
             f'{{"text":"first","url":"https://x.com/xai/status/{first}"}},'
@@ -58,14 +56,12 @@ def test_exact_targets_use_one_batched_model_fallback(monkeypatch):
     )
     structured = response["result"]["structuredContent"]
 
-    assert len(calls) == 2
-    assert first in calls[1]["query"] and second in calls[1]["query"]
-    assert [call["model"] for call in calls] == ["custom-stable-model", "custom-stable-model"]
+    assert len(calls) == 1
+    assert first in calls[0]["query"] and second in calls[0]["query"]
+    assert calls[0]["model"] == "custom-stable-model"
     assert all("_reasoning_effort" not in call for call in calls)
     assert structured["target_match"]["missing"] == []
     assert [stage["name"] for stage in structured["retrieval_stages"]] == [
-        "stable_extract",
-        "raw_expansion",
         "public_oembed",
         "target_fallback",
     ]
@@ -88,6 +84,8 @@ def test_target_extraction_cap_is_visible_in_result(monkeypatch):
     assert len(structured["request"]["target_status_ids"]) == 5
     assert "target status extraction capped at 5 IDs" in structured["warnings"]
     assert len(calls) == 2
+
+
 
 
 def test_exact_target_drops_nearby_posts_from_result(monkeypatch):

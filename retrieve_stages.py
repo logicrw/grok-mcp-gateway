@@ -27,7 +27,8 @@ async def run_search_stage(
     *,
     stage: str,
     budget: RequestBudget,
-    reasoning_effort: Optional[str],
+    reasoning_effort: Optional[str] = None,
+    stage_seconds: Optional[float] = None,
 ) -> xai_responses.ResponsesResult:
     stage_arguments = dict(arguments)
     model = str(stage_arguments.get("model") or "unknown")
@@ -37,7 +38,7 @@ async def run_search_stage(
     else:
         stage_arguments["_reasoning_effort"] = effective_effort
 
-    timeout = budget.stage_timeout()
+    timeout = budget.stage_timeout(stage_seconds)
     if timeout <= 0:
         record_timeout("total")
         record_error(stage=stage, kind="total_timeout")
@@ -79,13 +80,16 @@ async def run_search_stage(
         duration_seconds=time.monotonic() - started,
     )
     reasoning_tokens, x_search_calls = xai_responses.parse_usage_metrics(result.usage)
+    cost_ticks = xai_responses.parse_usage_cost_ticks(result.usage)
     record_usage(
         stage=stage,
         model=result.model,
         reasoning_tokens=reasoning_tokens,
         x_search_calls=x_search_calls,
+        cost_ticks=cost_ticks,
     )
     return result
+
 
 
 def _record_stage_failure(stage: str, model: str, effort: str, started: float, boundary: str) -> None:

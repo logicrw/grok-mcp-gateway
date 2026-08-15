@@ -165,6 +165,13 @@ def parse_usage_metrics(usage: Any) -> tuple[int, int]:
     )
 
 
+def parse_usage_cost_ticks(usage: Any) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    val = usage.get("cost_in_usd_ticks", 0)
+    return val if isinstance(val, int) and val >= 0 else 0
+
+
 async def get_client() -> httpx.AsyncClient:
     global _client, _client_loop
     current_loop = asyncio.get_running_loop()
@@ -177,9 +184,10 @@ async def get_client() -> httpx.AsyncClient:
                     await old_client.aclose()
                 except RuntimeError:
                     logger.debug("Could not close xAI Responses client from a previous event loop.")
-            _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            _client = httpx.AsyncClient(timeout=httpx.Timeout(90.0))
             _client_loop = current_loop
     return _client
+
 
 
 def _client_creation_lock(loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
@@ -198,21 +206,27 @@ async def aclose_client() -> None:
     _client_loop = None
 
 
-async def _headers(*, force_refresh: bool = False) -> tuple[Dict[str, str], str]:
-    context = await token_manager.get_auth_context(force_refresh=force_refresh)
+async def _headers(*, force_refresh: bool = False, stale_access_token: Optional[str] = None) -> tuple[Dict[str, str], str, str]:
+    try:
+        context = await token_manager.get_auth_context(force_refresh=force_refresh, stale_access_token=stale_access_token)
+    except TypeError:
+        context = await token_manager.get_auth_context(force_refresh=force_refresh)
+    auth_header = context["headers"].get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip()
     return {
         "Accept": "application/json",
         "Content-Type": "application/json",
         **context["headers"],
-    }, str(context.get("credential_source") or "unknown")
+    }, str(context.get("credential_source") or "unknown"), token
+
 
 
 async def post(payload: Dict[str, Any]) -> ResponsesResult:
-    headers, credential_source = await _headers()
+    headers, credential_source, used_token = await _headers()
     client = await get_client()
     response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
     if response.status_code == 401:
-        headers, credential_source = await _headers(force_refresh=True)
+        headers, credential_source, used_token = await _headers(force_refresh=True, stale_access_token=used_token)
         response = await client.post(XAI_RESPONSES_URL, headers=headers, json=payload)
     if response.status_code >= 400:
         if config.GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS:
@@ -235,3 +249,4 @@ async def post(payload: Dict[str, Any]) -> ResponsesResult:
         degraded=_extract_degraded(data),
         credential_source=credential_source,
     )
+

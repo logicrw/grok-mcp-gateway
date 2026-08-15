@@ -25,16 +25,18 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
         limit=config.GROK_PROXY_RETRIEVE_MAX_TARGETS,
     )
     mode = _detect_mode(intent, query, handles, sort, target_status_ids)
+    target_strategy = _detect_target_strategy(mode, target_status_ids)
     count = mcp_posts.clean_int(arguments, "count", 10, minimum=1, maximum=20)
     include_replies = _clean_bool(arguments, "include_replies", True)
     include_reposts = _clean_bool(arguments, "include_reposts", True)
+    explicit_model = _clean_model(arguments)
 
     posts_arguments: Dict[str, Any] = {
         "count": count,
         "sort": sort,
         "include_replies": include_replies,
         "include_reposts": include_reposts,
-        "model": _clean_model(arguments),
+        "model": explicit_model,
     }
     if handles:
         posts_arguments["handles"] = handles
@@ -58,6 +60,8 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
         {
             "mode": mode,
             "intent": intent,
+            "target_strategy": target_strategy,
+            "explicit_model": explicit_model,
             "excluded_handles": excluded_handles,
             "model_policy": _clean_model_policy(arguments),
             "quality": _clean_quality(arguments),
@@ -147,20 +151,48 @@ def _clean_quality(arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _query_is_primarily_status_targets(query: Optional[str], target_status_ids: list[str]) -> bool:
+    if not query or not target_status_ids:
+        return False
+    import re
+    cleaned = re.sub(r"https?://[^\s]+", "", query)
+    cleaned = re.sub(r"\b\d{15,20}\b", "", cleaned)
+    cleaned = re.sub(r"\b(or|and)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[,;|\s]+", "", cleaned)
+    return len(cleaned) < 15
+
+
+
 def _detect_mode(intent: str, query: Optional[str], handles: list[str], sort: str, target_status_ids: list[str]) -> str:
     query_text = (query or "").lower()
-    if target_status_ids:
-        return "source_discovery"
-    if handles and sort == "latest" and intent in {"auto", "posts", "research"}:
-        return "latest_by_handle"
-    if intent in {"source_discovery", "verify_claim"}:
-        return "source_discovery"
+    if intent == "verify_claim":
+        return "claim_verification"
     if intent == "reaction_tracking":
         return "reaction_tracking"
+    if intent == "source_discovery":
+        return "source_discovery"
     if intent == "posts":
         return "structured_posts"
+    if intent == "research":
+        return "semantic_research"
+    if any(marker in query_text for marker in ("证实", "核查", "真假", "verify", "fact-check")):
+        return "claim_verification"
     if any(marker in query_text for marker in ("原帖", "信源", "official", "source", "original")):
         return "source_discovery"
     if any(marker in query_text for marker in ("反应", "争议", "reaction", "quote")):
         return "reaction_tracking"
-    return "semantic_research"
+    if target_status_ids and _query_is_primarily_status_targets(query, target_status_ids):
+        return "structured_posts"
+    if handles and sort == "latest" and intent == "auto":
+        return "latest_by_handle"
+    return "semantic_research" if query_text else "structured_posts"
+
+
+
+def _detect_target_strategy(mode: str, target_status_ids: list[str]) -> str:
+    if not target_status_ids:
+        return "none"
+    if mode in {"claim_verification", "reaction_tracking", "semantic_research", "source_discovery"}:
+        return "seed_then_research"
+    return "exact_only"
+

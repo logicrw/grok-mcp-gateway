@@ -1,4 +1,4 @@
-# X Retrieval Architecture
+# X Retrieval Architecture (v2.1)
 
 `x_retrieve` is the only public MCP retrieval tool. The gateway keeps model-dependent behavior behind one deterministic controller so model upgrades do not change the client contract.
 
@@ -20,95 +20,67 @@ planning, vector stores, and multi-agent research frameworks are also non-goals
 until repeated production traces show a specific failure that the current
 controller cannot solve more simply.
 
-## Request paths
+## Execution Lanes
 
-| Request shape | Stable stage | Deterministic recovery | Optional expansion |
+The v2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
+
+1. **Deterministic Lane (oEmbed-first)**:
+   - For explicit X status URLs or 15-20 digit IDs, public oEmbed is executed first concurrently.
+   - If all target posts are recovered with full text, model calls drop to 0.
+   - Missing targets trigger a batched fallback prompt via Fast Lane (or Smart Lane if budget allows).
+   - Exact-only requests never invoke Composer raw expansion.
+
+2. **Fast Lane (`grok-4.20-0309-non-reasoning`)**:
+   - Conservative routing for simple `latest_by_handle` requests and simple `structured_posts` without heavy quality requirements or reasoning markers.
+   - Constrained by native Structured Outputs (`text.format.json_schema`), `max_turns=1~2`, and short stage timeout (15s).
+   - Forbids reasoning effort parameters (non-reasoning model).
+
+3. **Smart Lane (`grok-4.6` default, `grok-4.5` fallback compatibility)**:
+   - Default stable lane for complex semantic research, source discovery, reaction tracking, and claim verification.
+   - Supports validated `reasoning.effort` (`low`, `medium`, `high`, `xhigh`) on capable models.
+   - Receives automatic escalations from Fast Lane when Fast Lane results fail quality gates and remaining budget >= 35s.
+
+4. **Raw Expansion Lane (`grok-composer-2.5-fast`)**:
+   - Candidate expansion source strictly guarded by deterministic quality filters.
+   - Only invoked if Smart stage fails quality requirements and policy permits raw expansion.
+
+| Request shape / Intent | Primary Lane | Deterministic recovery | Quality gate & escalation |
 | --- | --- | --- | --- |
-| Explicit status URL or ID | Active stable model (Grok 4.5 by default), low reasoning when supported | Concurrent public oEmbed, then one batched fallback using the same active stable model | Composer is never used |
-| Latest by handle | Active stable model, low reasoning when supported | Quality and target validation | Composer only when stable output is empty |
-| Structured posts | Active stable model, low reasoning when supported | Schema normalization and quality gate | Composer only when the quality gate fails |
-| Research, source, reactions | Active stable model, medium reasoning when supported | Schema normalization and quality gate | Composer only when the quality gate fails |
-| Claim verification | Active stable model, high reasoning when supported | Schema normalization and target validation | Composer only when allowed by policy |
+| Explicit status URL/ID | Deterministic Lane (oEmbed first) | Concurrent public oEmbed | Missing IDs -> Fast fallback -> Smart fallback (no Composer) |
+| Latest by handle | Fast Lane (`grok-4.20-0309-non-reasoning`) | Schema normalization | Quality fail -> Smart escalation -> Composer |
+| Simple structured posts | Fast Lane (`grok-4.20-0309-non-reasoning`) | Structured Outputs | Quality fail -> Smart escalation -> Composer |
+| Research / Source discovery | Smart Lane (`grok-4.6`, low/medium reasoning) | Structured Outputs | Quality fail -> Composer |
+| Reaction tracking | Smart Lane (`grok-4.6`, low/medium reasoning) | Structured Outputs | Quality fail -> Composer |
+| Claim verification | Smart Lane (`grok-4.6`, medium/high reasoning) | Structured Outputs | Quality fail -> Composer |
 
-Reasoning effort is attached only to the documented `grok-4.5` model. Custom models and `grok-composer-2.5-fast` do not inherit that parameter. This follows the [Grok 4.5](https://docs.x.ai/developers/grok-4-5) and [reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning) contracts.
 
-`model_policy=stable_only` disables Composer/raw expansion; it does not disable public oEmbed or the active stable model's exact-target fallback. Exact-target results are deterministically filtered to the requested status IDs before return, and unstructured upstream `raw_text` or stage previews are omitted from that response path.
+## Concurrency and Single-Flight OAuth
 
-## Bounded orchestration
+- **OAuth Refresh Coalescing**:
+  - Concurrent requests that encounter HTTP 401 supply `stale_access_token` to `get_access_token()`.
+  - While waiting for the async refresh lock, subsequent coroutines detect token rotation and immediately reuse the fresh access token.
+  - 5 concurrent 401s generate exactly 1 upstream OAuth refresh request.
 
-One `x_retrieve` request has a 120-second total deadline and a 60-second generative-stage ceiling. The outer stage deadline wraps semaphore wait, OAuth refresh, retry, and response parsing. Separately, each individual xAI HTTP request currently has a 60-second client timeout. These are distinct boundaries: the outer stage budget can expire first because it includes work outside the HTTP call, and later stages receive only the remaining total budget.
+## Bounded Orchestration & Configuration
 
-| Setting | Default | Bound |
-| --- | ---: | ---: |
-| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | 120 | 10-300 |
-| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | 60 | 5-120 and no greater than total |
-| `GROK_PROXY_RETRIEVE_MAX_TARGETS` | 5 | 1-10 |
-| `GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY` | 3 | 1-10 |
+| Setting | Default | Description |
+| --- | ---: | --- |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | 120.0 | Total request deadline |
+| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | 60.0 | Maximum per-stage ceiling |
+| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | 15.0 | Fast lane stage ceiling |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | 45.0 | Smart lane stage ceiling |
+| `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | 35.0 | Minimum remaining budget required for Smart escalation |
+| `GROK_PROXY_FALLBACK_RESERVE_SECONDS` | 8.0 | Safety reserve time for clean finalization |
+| `GROK_PROXY_FAST_MAX_TURNS` | 2 | Tool turn limit for Fast Lane |
+| `GROK_PROXY_SMART_MAX_TURNS` | 5 | Tool turn limit for Smart Lane |
+| `GROK_PROXY_ENABLE_AUTO_TIERING` | true | Enable Fast -> Smart adaptive routing |
+| `GROK_PROXY_STORE_RESPONSES` | false | Explicit `store: false` for independent retrieval requests |
 
-Explicit targets are capped before orchestration and the cap is returned in `warnings`. Missing targets are sent in one fallback prompt, avoiding one model round trip per status ID.
+## Telemetry & Metrics
 
-## Trust boundaries
-
-- Stable and raw model output always passes schema normalization and deterministic target matching.
-- Composer remains a quality-gated candidate expansion source. Non-JSON output is accepted only when a deterministic parser finds a real X status URL or labeled 15-20 digit ID.
-- Public oEmbed is used only for exact IDs and never broadens the requested target set.
-- `timeline_verified=false` remains explicit because xAI X Search is generated retrieval, not an official X API timeline.
-- Context compaction is intentionally absent. Each stage is a short, independent Responses request rather than a growing agent conversation.
-
-## Operations
-
-`/health` reports active stable and raw model IDs. `/health?deep=1` adds `listed`, `not_listed`, or `unknown` from `/v1/models`; absence from that list is not reported as an entitlement failure.
-
-`/metrics` records final status, stage/model-role/status/reasoning effort, timeout boundary, bounded error kind, reasoning tokens, and server-side X Search calls. Model roles are limited to `stable`, `raw`, `public_oembed`, and `unknown`; exact model IDs remain visible through health and response diagnostics. No response body, prompt, OAuth value, request-provided model name, or user content is used as a metric label.
-
-### Local upgrade synchronization
-
-The runtime sources of truth are the checked-out code used by the resident
-service, the LaunchAgent or systemd service definition, `/health`, and MCP
-`tools/list`. Client-side `x_retrieve.json` files are derived schema caches and
-may remain stale until that client reconnects.
-
-After changing a model default, routing, prompt, or fallback:
-
-1. Restart the resident service and confirm it is running from the intended
-   checkout and virtual environment.
-2. Run `scripts/check_mcp_gateway.sh` and inspect `/health?deep=1`.
-3. Confirm `tools/list` advertises the active model and current input schema.
-4. Reconnect clients with stale schema caches; do not hand-maintain those cache
-   files as configuration.
-5. Run one stable retrieval and, when Composer behavior changed, one forced
-   `model_policy=raw_expanded` retrieval. A successful raw stage proves current
-   runtime access; `not_listed` or a failed stage alone does not prove an
-   entitlement problem. Classify failures using the bounded error kind and
-   upstream status.
-6. Inspect bounded metrics and logs without recording prompts, post bodies, or
-   credentials.
-
-## Model upgrade protocol
-
-Run this protocol only when the stable/raw model, retrieval prompt, routing,
-quality gate, or fallback behavior changes. Ordinary refactors, tests, and
-documentation edits use the normal unit/contract suite and do not require a
-live model comparison.
-
-For each affected model role:
-
-1. Run the same de-identified latest, exact-target, research, source, and reaction cases.
-2. Compare target match, usable status URLs, original text, JSON reliability, latency, timeout rate, reasoning tokens, and X Search calls.
-3. Keep deterministic routing, quality gates, and oEmbed unchanged during the comparison.
-4. Change one model role at a time and retain environment overrides for rollback.
-5. Remove Composer only when stable-only retrieval consistently matches its useful yield without increasing empty or no-match results.
-
-## Repository evidence policy
-
-Keep durable behavior in production code, focused regression tests, current
-architecture documentation, and de-identified evaluation summaries. Before
-removing an exploratory artifact, distill any unique decision, failure mode,
-metric, or acceptance criterion into one of those maintained surfaces.
-
-Do not commit raw Twitter/X exports, local Agent histories, model response
-bodies, OAuth material, personal prompts, one-off analysis scripts, debug
-journals, caches, or reports that can be regenerated. These artifacts are large,
-privacy-sensitive, time-bound, and easily mistaken for maintained product
-truth. Their useful aggregate evidence belongs in the evaluation baseline;
-their reproducible behavior belongs in tests.
+`/metrics` provides low-cardinality Prometheus telemetry:
+- `mcp_x_retrieve_final_status_total`: `ok`, `empty`, `no_match`, `degraded`, `error`.
+- `mcp_x_retrieve_stage_total` & `_duration_seconds_total`: bounded by `stage`, `model_role` (`fast`, `smart`, `raw`, `public_oembed`, `stable`), `status`, `reasoning_effort`.
+- `mcp_x_retrieve_timeout_total`: `stage`, `total`, `upstream`.
+- `mcp_x_retrieve_reasoning_tokens_total` & `mcp_x_retrieve_x_search_calls_total`.
+- `mcp_x_retrieve_cost_usd_ticks_total`: parsed from upstream `usage.cost_in_usd_ticks`.

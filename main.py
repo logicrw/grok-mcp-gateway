@@ -83,7 +83,12 @@ def _metric_label(value: object) -> str:
 def _tracked_models() -> dict[str, str]:
     from retrieve_schema import RAW_MODEL
 
-    return {"stable": mcp_x_search.DEFAULT_MODEL, "raw": RAW_MODEL}
+    return {
+        "stable": mcp_x_search.DEFAULT_MODEL,
+        "fast": config.GROK_PROXY_FAST_MODEL,
+        "raw": RAW_MODEL,
+    }
+
 
 
 def _mcp_health_status() -> dict:
@@ -468,15 +473,24 @@ async def _streaming_proxy(
             await upstream.aclose()
             auth_refreshed = True
             max_attempts += 1
+            used_token = (headers.get("Authorization") or "").removeprefix("Bearer ").strip()
             try:
-                fresh_token = await token_manager.get_access_token(force_refresh=True)
+                try:
+                    fresh_token = await token_manager.get_access_token(
+                        force_refresh=True,
+                        stale_access_token=used_token or None,
+                    )
+                except TypeError:
+                    fresh_token = await token_manager.get_access_token(force_refresh=True)
             except Exception as exc:
                 last_exc = exc
                 upstream = None
                 break
+
             headers = dict(headers)
             headers["Authorization"] = f"Bearer {fresh_token}"
             continue
+
 
         if upstream.status_code not in (502, 503, 429):
             break

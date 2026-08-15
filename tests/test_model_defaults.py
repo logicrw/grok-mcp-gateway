@@ -24,8 +24,9 @@ def _read_default_model(env_overrides: dict[str, str]) -> str:
     return completed.stdout.strip()
 
 
-def test_default_retrieve_model_is_grok_4_5_when_overrides_are_absent():
-    assert _read_default_model({}) == "grok-4.5"
+def test_default_retrieve_model_is_grok_4_6_when_overrides_are_absent():
+    assert _read_default_model({}) == "grok-4.6"
+
 
 
 def test_legacy_model_override_remains_supported():

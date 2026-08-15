@@ -21,7 +21,11 @@ LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
 RETRIEVE_TOOL_NAME = mcp_retrieve.RETRIEVE_TOOL_NAME
 TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_VERSION = "0.1.0"
-DEFAULT_MODEL = (os.getenv("GROK_PROXY_RETRIEVE_MODEL") or os.getenv("GROK_PROXY_MCP_MODEL") or "grok-4.5").strip() or "grok-4.5"
+DEFAULT_MODEL = (
+    os.getenv("GROK_PROXY_RETRIEVE_MODEL")
+    or os.getenv("GROK_PROXY_MCP_MODEL")
+    or "grok-4.6"
+).strip() or "grok-4.6"
 TOOL_NAMES = {RETRIEVE_TOOL_NAME}
 REMOVED_TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
 X_SEARCH_INPUT_MAX_CHARS = 8000
@@ -36,7 +40,11 @@ X_SEARCH_ARGUMENT_KEYS = {
     "model",
     "raw",
     "_reasoning_effort",
+    "_max_turns",
+    "_store",
+    "_structured_output",
 }
+
 _x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
 _x_search_counts: defaultdict[str, int] = defaultdict(int)
 _x_search_total_duration: float = 0.0
@@ -135,6 +143,8 @@ def metrics_lines() -> list[str]:
 
 
 def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    from retrieve_schema import X_POSTS_STAGE_SCHEMA
+
     unknown = set(arguments) - X_SEARCH_ARGUMENT_KEYS
     if unknown:
         raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
@@ -156,6 +166,27 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "tools": [_build_x_search_tool(arguments)],
         "temperature": 0,
     }
+    max_turns = arguments.get("_max_turns")
+    if isinstance(max_turns, int) and max_turns > 0:
+        payload["max_turns"] = max_turns
+
+    store = arguments.get("_store")
+    if store is not None:
+        payload["store"] = bool(store)
+    elif config.GROK_PROXY_STORE_RESPONSES is False:
+        payload["store"] = False
+
+    structured_output = arguments.get("_structured_output")
+    if structured_output is not None and bool(structured_output):
+        payload["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": "x_posts_stage_result",
+                "schema": X_POSTS_STAGE_SCHEMA,
+                "strict": True,
+            }
+        }
+
     reasoning_effort = arguments.get("_reasoning_effort")
     if reasoning_effort in {"low", "medium", "high"} and model_supports_reasoning_effort(model):
         payload["reasoning"] = {"effort": reasoning_effort}
@@ -176,7 +207,10 @@ def tool_error_result(tool_name: str, arguments: Dict[str, Any], error_text: str
         retrieve_arguments = dict(arguments)
         requested_model = retrieve_arguments.get("model")
         model = requested_model.strip() if isinstance(requested_model, str) else ""
-        retrieve_arguments["model"] = (model or DEFAULT_MODEL)[:RETRIEVE_MODEL_MAX_CHARS]
+        if model:
+            retrieve_arguments["model"] = model[:RETRIEVE_MODEL_MAX_CHARS]
+        else:
+            retrieve_arguments.pop("model", None)
         return mcp_retrieve.error_result(retrieve_arguments, error_text)
     return {"content": [{"type": "text", "text": f"{tool_name} failed: {error_text}"}], "isError": True}
 
@@ -193,7 +227,10 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
         if model_value is not None and not isinstance(model_value, str):
             raise ValueError("model must be a string")
         requested_model = model_value.strip() if isinstance(model_value, str) else ""
-        retrieve_arguments["model"] = requested_model or DEFAULT_MODEL
+        if requested_model:
+            retrieve_arguments["model"] = requested_model
+        else:
+            retrieve_arguments.pop("model", None)
         result = await mcp_retrieve.call_retrieve(retrieve_arguments, search=_call_x_search_result)
         _record_x_search("success", time.monotonic() - start)
         return result

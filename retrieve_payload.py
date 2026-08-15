@@ -51,11 +51,13 @@ def raw_decision(payload: Dict[str, Any], metadata: Dict[str, Any]) -> tuple[boo
     quality = metadata.get("quality") or {}
     if metadata.get("model_policy") == "stable_only" or quality.get("allow_raw_expansion") is False:
         return False, "policy_disabled"
+    if metadata.get("target_strategy") == "exact_only":
+        return False, "exact_only_disallows_raw"
+    if metadata.get("model_policy") == "raw_expanded":
+        return True, "policy_forced"
     min_items = int(quality.get("min_items") or 1)
     if metadata.get("mode") == "latest_by_handle" and len(payload["items"]) >= min_items:
         return False, "latest_by_handle"
-    if metadata.get("model_policy") == "raw_expanded":
-        return True, "policy_forced"
     if len(payload["items"]) < min_items:
         return True, "min_items"
     if quality.get("require_status_url") and not any(item.get("url") for item in payload["items"]):
@@ -65,6 +67,7 @@ def raw_decision(payload: Dict[str, Any], metadata: Dict[str, Any]) -> tuple[boo
     if metadata.get("mode") in {"source_discovery", "reaction_tracking"} and not any(item.get("url") for item in payload["items"]):
         return True, "mode_requires_status_url"
     return False, "quality_gate_passed"
+
 
 
 def should_run_raw(payload: Dict[str, Any], metadata: Dict[str, Any]) -> bool:

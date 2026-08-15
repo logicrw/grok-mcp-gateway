@@ -9,6 +9,8 @@ _timeouts: defaultdict[str, int] = defaultdict(int)
 _errors: defaultdict[tuple[str, str], int] = defaultdict(int)
 _reasoning_tokens: defaultdict[tuple[str, str], int] = defaultdict(int)
 _x_search_calls: defaultdict[tuple[str, str], int] = defaultdict(int)
+_cost_ticks: defaultdict[tuple[str, str], int] = defaultdict(int)
+_route_count: defaultdict[tuple[str, str, str], int] = defaultdict(int)
 
 
 def _label(value: object) -> str:
@@ -41,10 +43,23 @@ def record_error(*, stage: str, kind: str) -> None:
     _errors[(stage, kind)] += 1
 
 
-def record_usage(*, stage: str, model: str, reasoning_tokens: int, x_search_calls: int) -> None:
+def record_usage(
+    *,
+    stage: str,
+    model: str,
+    reasoning_tokens: int,
+    x_search_calls: int,
+    cost_ticks: int = 0,
+) -> None:
     key = (stage, _model_role(stage, model))
     _reasoning_tokens[key] += max(0, reasoning_tokens)
     _x_search_calls[key] += max(0, x_search_calls)
+    _cost_ticks[key] += max(0, cost_ticks)
+
+
+def record_route(*, lane: str, objective_mode: str, escalated: bool = False) -> None:
+    key = (lane, objective_mode, "true" if escalated else "false")
+    _route_count[key] += 1
 
 
 def metrics_lines() -> list[str]:
@@ -87,6 +102,8 @@ def metrics_lines() -> list[str]:
         )
     lines.extend(_usage_lines("reasoning_tokens", _reasoning_tokens))
     lines.extend(_usage_lines("x_search_calls", _x_search_calls))
+    if any(_cost_ticks.values()):
+        lines.extend(_usage_lines("cost_usd_ticks", _cost_ticks))
     return lines
 
 
@@ -107,6 +124,10 @@ def _model_role(stage: str, model: str) -> str:
         return "raw"
     if stage == "public_oembed":
         return "public_oembed"
+    if stage in {"fast_extract", "target_fast_fallback"}:
+        return "fast"
+    if stage in {"smart_extract", "smart_escalation", "target_smart_fallback"}:
+        return "smart"
     if model == "unknown":
         return "unknown"
     return "stable"
