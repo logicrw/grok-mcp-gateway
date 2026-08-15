@@ -1,18 +1,20 @@
-"""Grok MCP Gateway — local reverse proxy to api.x.ai using Hermes xAI OAuth tokens.
+"""Grok MCP Gateway — local reverse proxy to api.x.ai using native xAI OAuth.
 
 Runs independently on a fixed local port (default 9996).
-Features: token prewarm, Hermes auth.json watch, deep health, request logging,
+Features: native browser login, token prewarm, deep health, request logging,
 upstream retry, Prometheus metrics.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hmac
 import ipaddress
 import json
 import logging
 import socket
+import sys
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -25,6 +27,7 @@ from fastapi.responses import StreamingResponse
 import config
 import mcp_server
 import mcp_x_search
+import oauth_flow
 import token_manager
 import xai_responses
 
@@ -37,9 +40,6 @@ _bg_tasks: set[asyncio.Task] = set()
 _request_counts: defaultdict[str, int] = defaultdict(int)
 _request_total_duration: float = 0.0
 _request_total_count: int = 0
-
-# Hermes watcher state
-_last_hermes_mtime: float = 0.0
 
 # RFC 9110 hop-by-hop headers plus sensitive client credentials that must never
 # be forwarded to xAI. The proxy injects its own upstream OAuth Authorization.
@@ -330,10 +330,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         timeout=httpx.Timeout(300.0, connect=10.0),
     )
 
-    # Background watchers
+    # Background token prewarm.
     t1 = asyncio.create_task(_token_watcher(), name="token-watcher")
-    t2 = asyncio.create_task(_hermes_watcher(), name="hermes-watcher")
-    _bg_tasks.update({t1, t2})
+    _bg_tasks.add(t1)
 
     yield
 
@@ -371,33 +370,6 @@ async def _token_watcher() -> None:
         except Exception as exc:
             logger.error("Token watcher error: %s", exc.__class__.__name__)
         await asyncio.sleep(max(30, config.TOKEN_REFRESH_WINDOW // 2))
-
-
-async def _hermes_watcher() -> None:
-    """Poll Hermes auth.json and re-import when it changes."""
-    global _last_hermes_mtime
-    while True:
-        try:
-            await asyncio.sleep(config.HERMES_POLL_INTERVAL)
-            if not config.HERMES_AUTH_PATH.exists():
-                continue
-            mtime = config.HERMES_AUTH_PATH.stat().st_mtime
-            if _last_hermes_mtime == 0:
-                _last_hermes_mtime = mtime
-                continue
-            if mtime != _last_hermes_mtime:
-                _last_hermes_mtime = mtime
-                logger.info("Hermes auth.json changed, re-importing tokens...")
-                current_state = await token_manager.read_local_state()
-                hermes_state = await token_manager.rehydrate_from_hermes(current_state)
-                if hermes_state and hermes_state.get("access_token") and hermes_state.get("client_id"):
-                    logger.info("Hermes tokens re-imported.")
-                else:
-                    logger.info("Hermes auth.json changed but no newer usable xai-oauth credential was found.")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("Hermes watcher error: %s", exc.__class__.__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -736,8 +708,61 @@ def find_port(start: int = config.PORT, max_scan: int = 20) -> int:
     raise RuntimeError(f"No available port found in range {start}~{start + max_scan - 1}")
 
 
-def main() -> None:
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Grok MCP Gateway")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--login",
+        action="store_true",
+        help="Run native xAI browser login, then start the gateway.",
+    )
+    group.add_argument(
+        "--login-only",
+        action="store_true",
+        help="Run native xAI browser login and exit without starting the gateway.",
+    )
+    return parser.parse_args(argv)
+
+
+def _interactive_login_requested() -> bool:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    try:
+        answer = input("No local xAI OAuth credentials. Sign in now? [Y/n] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"", "y", "yes"}
+
+
+def _run_native_login() -> None:
+    asyncio.run(oauth_flow.login_xai_oauth())
+
+
+def _ensure_startup_auth(args: argparse.Namespace) -> bool:
+    """Return False for successful --login-only, otherwise ensure startup auth."""
+    if args.login or args.login_only:
+        _run_native_login()
+        if args.login_only:
+            return False
+        asyncio.run(_preflight_startup())
+        return True
+
+    try:
+        asyncio.run(_preflight_startup())
+        return True
+    except token_manager.AuthRequiredError:
+        if not _interactive_login_requested():
+            raise
+
+    _run_native_login()
+    asyncio.run(_preflight_startup())
+    return True
+
+
+def main(argv: Optional[list[str]] = None) -> None:
     import uvicorn
+
+    args = _parse_args(argv)
 
     logging.basicConfig(
         level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -745,10 +770,22 @@ def main() -> None:
     )
 
     try:
-        asyncio.run(_preflight_startup())
+        should_start = _ensure_startup_auth(args)
+    except KeyboardInterrupt as exc:
+        logger.error("OAuth login cancelled.")
+        raise SystemExit(130) from exc
+    except oauth_flow.OAuthLoginError as exc:
+        logger.error("OAuth login failed: %s", exc)
+        raise SystemExit(1) from exc
+    except token_manager.AuthRequiredError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
     except Exception as exc:
         logger.error("Startup preflight failed: %s", exc.__class__.__name__)
         raise SystemExit(1) from exc
+
+    if not should_start:
+        return
 
     port = find_port(config.PORT, max_scan=20 if config.GROK_GATEWAY_PORT_AUTOSCAN else 1)
     logger.info("Starting Grok MCP Gateway on http://%s:%d", config.HOST, port)

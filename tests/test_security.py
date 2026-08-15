@@ -673,37 +673,30 @@ def test_refresh_failure_does_not_return_upstream_secret(monkeypatch, tmp_path):
     assert "user@example.com" not in message
 
 
-def test_refresh_failure_rehydrates_new_hermes_credential(monkeypatch, tmp_path):
-    future_token = _unsigned_jwt({"exp": 4_102_444_800, "client_id": "client-from-hermes"})
-
+def test_refresh_failure_does_not_rehydrate_from_hermes(monkeypatch, tmp_path):
     def fake_post(url, headers, data, timeout):
         request = httpx.Request("POST", url)
         return httpx.Response(400, request=request, text="refresh_token=old-secret")
 
     async def fake_load_from_hermes(auth_path=None):
-        return {
-            "access_token": future_token,
-            "refresh_token": "new-refresh",
-            "client_id": "client-from-hermes",
-            "token_endpoint": "https://auth.x.ai/oauth2/token",
-        }
+        raise AssertionError("runtime refresh must not consult Hermes")
 
     monkeypatch.setattr(token_manager.httpx, "post", fake_post)
     monkeypatch.setattr(token_manager, "load_from_hermes", fake_load_from_hermes)
     monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", tmp_path / "auth_state.json")
 
-    updated = asyncio.run(token_manager.refresh_access_token({
-        "access_token": "old-access",
-        "refresh_token": "old-refresh",
-        "client_id": "client-from-hermes",
-        "token_endpoint": "https://auth.x.ai/oauth2/token",
-    }))
+    with pytest.raises(RuntimeError, match="400"):
+        asyncio.run(token_manager.refresh_access_token({
+            "access_token": "old-access",
+            "refresh_token": "old-refresh",
+            "client_id": "client-from-hermes",
+            "token_endpoint": "https://auth.x.ai/oauth2/token",
+        }))
 
-    assert updated["access_token"] == future_token
-    assert updated["refresh_token"] == "new-refresh"
-    assert updated["last_refresh_status"] == "rehydrated_from_hermes"
-    assert updated["refresh_failure_count"] == 1
-    assert updated["reauth_required"] is False
+    failed = json.loads((tmp_path / "auth_state.json").read_text(encoding="utf-8"))
+    assert failed["last_refresh_status"] == "failure"
+    assert failed["refresh_failure_count"] == 1
+    assert failed["reauth_required"] is True
 
 
 def test_rehydrate_does_not_overwrite_newer_local_token(monkeypatch, tmp_path):

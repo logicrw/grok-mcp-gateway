@@ -90,7 +90,21 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Launch the Gateway
+### 2. Standalone xAI OAuth Authentication
+
+On a clean machine with no existing credentials, authenticate natively in your browser:
+
+```bash
+# Authenticate in browser and start the gateway immediately
+python main.py --login
+
+# Or authenticate only and exit
+python main.py --login-only
+# Or via standalone script
+python scripts/login_xai_oauth.py
+```
+
+### 3. Launch the Gateway
 
 ```bash
 # Start the resident server (default port 9996)
@@ -103,7 +117,8 @@ curl -sS http://127.0.0.1:9996/health
 # {"status":"ok","provider":"xai-oauth","mcp":{"enabled_tools":["x_retrieve"]...}}
 ```
 
-### 3. Background Service (macOS LaunchAgent)
+### 4. Background Service (macOS LaunchAgent)
+
 
 To run the gateway as a permanent background service on macOS:
 

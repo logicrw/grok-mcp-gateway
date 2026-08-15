@@ -90,7 +90,21 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. 启动服务
+### 2. 原生独立 xAI OAuth 登录认证
+
+在没有预设凭据的全新机器上，通过系统浏览器直接进行原生授权：
+
+```bash
+# 浏览器授权完成后立即启动网关
+python main.py --login
+
+# 或仅完成授权登录后退出
+python main.py --login-only
+# 或运行独立登录脚本
+python scripts/login_xai_oauth.py
+```
+
+### 3. 启动服务
 
 ```bash
 # 启动本地常驻网关（默认端口 9996）
@@ -103,7 +117,8 @@ curl -sS http://127.0.0.1:9996/health
 # {"status":"ok","provider":"xai-oauth","mcp":{"enabled_tools":["x_retrieve"]...}}
 ```
 
-### 3. 配置为后台常驻服务（macOS LaunchAgent）
+### 4. 配置为后台常驻服务（macOS LaunchAgent）
+
 
 在 macOS 上作为后台守护进程常驻运行：
 

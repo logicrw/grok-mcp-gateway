@@ -1,8 +1,8 @@
-"""Manages xAI OAuth tokens copied from Hermes auth.json.
+"""Manage gateway-private xAI OAuth tokens.
 
-Runs independently from Hermes to avoid token-refresh races.
-All blocking I/O is wrapped with asyncio.to_thread so this module
-is safe to call from async FastAPI handlers.
+Native browser login writes directly to LOCAL_AUTH_PATH. Hermes import helpers
+remain available only as explicit legacy migration utilities; normal startup,
+refresh, and background operation do not depend on Hermes.
 """
 
 from __future__ import annotations
@@ -27,6 +27,10 @@ import config
 from error_sanitizer import sanitize_text
 
 logger = logging.getLogger(__name__)
+
+
+class AuthRequiredError(RuntimeError):
+    """Raised when no usable gateway-local OAuth credential is available."""
 
 HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
 _STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
@@ -58,7 +62,7 @@ def get_refresh_diagnostics(state: Dict[str, Any]) -> Dict[str, Any]:
         "refresh_token_rotated": bool(state.get("refresh_token_rotated")),
         "refresh_success_count": _count_from_state(state, "refresh_success_count"),
         "refresh_failure_count": _count_from_state(state, "refresh_failure_count"),
-        "credential_source": state.get("credential_source") or "hermes_xai_oauth",
+        "credential_source": state.get("credential_source") or "native_xai_oauth",
         "reauth_required": bool(state.get("reauth_required")),
     }
 
@@ -340,7 +344,7 @@ async def init_local_state() -> Dict[str, Any]:
 
 
 async def read_local_state() -> Dict[str, Any]:
-    """Read local auth_state.json, bootstrapping from Hermes if missing."""
+    """Read gateway-local OAuth state without consulting external applications."""
     data = await _load_json(LOCAL_AUTH_PATH)
     if not data and LEGACY_LOCAL_AUTH_PATH.exists():
         data = await _load_json(LEGACY_LOCAL_AUTH_PATH)
@@ -353,14 +357,15 @@ async def read_local_state() -> Dict[str, Any]:
             except OSError:
                 logger.warning("Migrated token state but could not remove legacy source-tree token file.")
     if not data or not data.get("access_token"):
-        return await init_local_state()
+        raise AuthRequiredError(
+            "No local xAI OAuth credentials are available. "
+            "Run 'python main.py --login' or 'python scripts/login_xai_oauth.py'."
+        )
     if not data.get("client_id"):
-        hermes_state = await load_from_hermes()
-        if hermes_state and hermes_state.get("client_id"):
-            data["client_id"] = hermes_state["client_id"]
-            await _save_json(LOCAL_AUTH_PATH, data)
-        else:
-            raise RuntimeError("Local token state is missing OAuth client_id. Re-authenticate xAI Grok OAuth in Hermes.")
+        raise AuthRequiredError(
+            "Local xAI OAuth state is missing client_id. "
+            "Run 'python main.py --login' to re-authenticate."
+        )
     return data
 
 
@@ -408,9 +413,9 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
     token_endpoint = _validate_token_endpoint(str(state.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
 
     if not refresh_token:
-        raise RuntimeError("No refresh_token available. Re-authenticate with Hermes.")
+        raise AuthRequiredError("No refresh_token is available. Run 'python main.py --login'.")
     if not client_id:
-        raise RuntimeError("No OAuth client_id available. Re-authenticate xAI Grok OAuth in Hermes.")
+        raise AuthRequiredError("No OAuth client_id is available. Run 'python main.py --login'.")
 
     logger.info("Refreshing xAI OAuth token...")
     try:
@@ -424,10 +429,6 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
         failed["refresh_success_count"] = _count_from_state(state, "refresh_success_count")
         failed["reauth_required"] = True
         await _save_json(LOCAL_AUTH_PATH, failed)
-        rehydrated = await rehydrate_from_hermes(failed)
-        if rehydrated:
-            logger.info("Recovered xAI OAuth token state from Hermes after refresh failure.")
-            return rehydrated
         raise
 
     updated = dict(state)
@@ -443,7 +444,7 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
     updated["refresh_token_rotated"] = refreshed["refresh_token"] != refresh_token
     updated["refresh_success_count"] = _count_from_state(state, "refresh_success_count") + 1
     updated["refresh_failure_count"] = _count_from_state(state, "refresh_failure_count")
-    updated["credential_source"] = "xai-oauth"
+    updated["credential_source"] = state.get("credential_source") or "native_xai_oauth"
     updated["reauth_required"] = False
     await _save_json(LOCAL_AUTH_PATH, updated)
     logger.info("Token refreshed successfully.")
