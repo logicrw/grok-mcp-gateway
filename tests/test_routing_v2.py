@@ -7,13 +7,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import mcp_x_search
 import token_manager
+import xai_responses
 from retrieve_policy import (
     build_responses_payload,
+    build_xai_responses_payload,
     evaluate_quality,
     resolve_plan,
     should_escalate_to_smart,
 )
+from retrieve_schema import RAW_MODEL
 
 
 class RoutingV2Tests(unittest.TestCase):
@@ -148,6 +152,114 @@ class RoutingV2Tests(unittest.TestCase):
                 remaining_seconds=20.0,
             )
         )
+
+    def test_fast_production_payload_matches_plan_builder(self) -> None:
+        plan = resolve_plan(
+            {
+                "intent": "auto",
+                "mode": "latest_by_handle",
+                "handles": ["logicrw"],
+                "count": 5,
+                "query": None,
+                "quality": {"min_items": 1},
+            }
+        )
+        tool = {"type": "x_search", "allowed_x_handles": ["logicrw"]}
+        from_plan = build_responses_payload(query="latest posts", x_search_tool=tool, plan=plan)
+        production = mcp_x_search._x_search_payload(
+            {
+                "query": "latest posts",
+                "model": plan.model,
+                "allowed_x_handles": ["logicrw"],
+                "_max_turns": plan.max_turns,
+                "_structured_output": True,
+            }
+        )
+        self.assertEqual(production, from_plan)
+        self.assertNotIn("reasoning", production)
+
+    def test_smart_production_payload_matches_plan_builder(self) -> None:
+        plan = resolve_plan(
+            {
+                "intent": "verify_claim",
+                "mode": "source_discovery",
+                "query": "claim",
+                "count": 10,
+            }
+        )
+        from_plan = build_responses_payload(
+            query="claim",
+            x_search_tool={"type": "x_search"},
+            plan=plan,
+        )
+        production = mcp_x_search._x_search_payload(
+            {
+                "query": "claim",
+                "model": plan.model,
+                "_max_turns": plan.max_turns,
+                "_structured_output": True,
+                "_reasoning_effort": plan.reasoning_effort,
+            }
+        )
+        self.assertEqual(production, from_plan)
+        self.assertEqual(production["reasoning"], {"effort": "high"})
+
+    def test_raw_expansion_payload_omits_schema_reasoning_and_max_turns(self) -> None:
+        query = "cold topic"
+        production = mcp_x_search._x_search_payload({"query": query, "model": RAW_MODEL})
+        expected = build_xai_responses_payload(
+            query=query,
+            x_search_tool={"type": "x_search"},
+            model=RAW_MODEL,
+            max_turns=None,
+            store=False,
+            structured_output=False,
+            reasoning_effort="high",
+        )
+        self.assertEqual(production, expected)
+        self.assertNotIn("text", production)
+        self.assertNotIn("reasoning", production)
+        self.assertNotIn("max_turns", production)
+        self.assertFalse(production["store"])
+
+    def test_call_x_search_posts_shared_builder_body(self) -> None:
+        captured: list[dict] = []
+
+        async def fake_post(payload):
+            captured.append(dict(payload))
+            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, str(payload["model"]))
+
+        original = xai_responses.post
+        xai_responses.post = fake_post  # type: ignore[method-assign]
+        try:
+            plan = resolve_plan(
+                {
+                    "intent": "auto",
+                    "mode": "latest_by_handle",
+                    "handles": ["logicrw"],
+                    "count": 5,
+                    "query": None,
+                    "quality": {"min_items": 1},
+                }
+            )
+            tool = {"type": "x_search", "allowed_x_handles": ["logicrw"]}
+            asyncio.run(
+                mcp_x_search._call_x_search_result(
+                    {
+                        "query": "latest posts",
+                        "model": plan.model,
+                        "allowed_x_handles": ["logicrw"],
+                        "_max_turns": plan.max_turns,
+                        "_structured_output": True,
+                    }
+                )
+            )
+            self.assertEqual(
+                captured[0],
+                build_responses_payload(query="latest posts", x_search_tool=tool, plan=plan),
+            )
+        finally:
+            xai_responses.post = original  # type: ignore[method-assign]
 
 
 class TokenRefreshCoalescingTests(unittest.IsolatedAsyncioTestCase):

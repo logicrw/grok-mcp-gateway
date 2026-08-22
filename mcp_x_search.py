@@ -11,7 +11,7 @@ import config
 import mcp_posts
 import mcp_retrieve
 import xai_responses
-from retrieve_policy import model_supports_reasoning_effort
+from retrieve_policy import build_xai_responses_payload, resolve_store_flag
 from retrieve_schema import RETRIEVE_MODEL_MAX_CHARS, retrieve_tool_definition
 
 X_SEARCH_TOOL_NAME = "x_search"
@@ -138,8 +138,6 @@ def metrics_lines() -> list[str]:
 
 
 def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    from retrieve_schema import X_POSTS_STAGE_SCHEMA
-
     unknown = set(arguments) - X_SEARCH_ARGUMENT_KEYS
     if unknown:
         raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
@@ -155,37 +153,27 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
     model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
     if len(model) > RETRIEVE_MODEL_MAX_CHARS:
         raise ValueError(f"model must be at most {RETRIEVE_MODEL_MAX_CHARS} characters")
-    payload: Dict[str, Any] = {
-        "model": model,
-        "input": query,
-        "tools": [_build_x_search_tool(arguments)],
-        "temperature": 0,
-    }
+
     max_turns = arguments.get("_max_turns")
-    if isinstance(max_turns, int) and max_turns > 0:
-        payload["max_turns"] = max_turns
+    if not (isinstance(max_turns, int) and max_turns > 0):
+        max_turns = None
 
-    store = arguments.get("_store")
-    if store is not None:
-        payload["store"] = bool(store)
-    elif config.GROK_PROXY_STORE_RESPONSES is False:
-        payload["store"] = False
-
-    structured_output = arguments.get("_structured_output")
-    if structured_output is not None and bool(structured_output):
-        payload["text"] = {
-            "format": {
-                "type": "json_schema",
-                "name": "x_posts_stage_result",
-                "schema": X_POSTS_STAGE_SCHEMA,
-                "strict": True,
-            }
-        }
+    store_arg = arguments.get("_store")
+    store = resolve_store_flag(bool(store_arg) if store_arg is not None else None)
 
     reasoning_effort = arguments.get("_reasoning_effort")
-    if reasoning_effort in {"low", "medium", "high"} and model_supports_reasoning_effort(model):
-        payload["reasoning"] = {"effort": reasoning_effort}
-    return payload
+    if not isinstance(reasoning_effort, str):
+        reasoning_effort = None
+
+    return build_xai_responses_payload(
+        query=query,
+        x_search_tool=_build_x_search_tool(arguments),
+        model=model,
+        max_turns=max_turns,
+        store=store,
+        structured_output=bool(arguments.get("_structured_output")),
+        reasoning_effort=reasoning_effort,
+    )
 
 
 async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:

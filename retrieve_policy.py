@@ -431,6 +431,54 @@ def should_escalate_to_smart(
     return remaining_seconds >= minimum
 
 
+def resolve_store_flag(explicit: Optional[bool] = None) -> Optional[bool]:
+    """Return the Responses `store` value, or None to omit the field."""
+    if explicit is not None:
+        return bool(explicit)
+    if config.GROK_PROXY_STORE_RESPONSES is False:
+        return False
+    return None
+
+
+def build_xai_responses_payload(
+    *,
+    query: str,
+    x_search_tool: Mapping[str, Any],
+    model: str,
+    max_turns: Optional[int] = None,
+    store: Optional[bool] = False,
+    structured_output: bool = False,
+    reasoning_effort: Optional[str] = None,
+    capabilities: Mapping[str, ModelCapabilities] = DEFAULT_CAPABILITIES,
+) -> Dict[str, Any]:
+    """Build the unique xAI Responses body used by production and plan tests."""
+    payload: Dict[str, Any] = {
+        "model": model,
+        "input": query,
+        "tools": [dict(x_search_tool)],
+        "temperature": 0,
+    }
+    if isinstance(max_turns, int) and max_turns > 0:
+        payload["max_turns"] = max_turns
+    if store is not None:
+        payload["store"] = bool(store)
+
+    caps = _capabilities_for(model, capabilities)
+    if reasoning_effort in caps.reasoning_efforts:
+        payload["reasoning"] = {"effort": reasoning_effort}
+
+    if structured_output:
+        payload["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": "x_posts_stage_result",
+                "schema": X_POSTS_STAGE_SCHEMA,
+                "strict": True,
+            }
+        }
+    return payload
+
+
 def build_responses_payload(
     *,
     query: str,
@@ -440,28 +488,14 @@ def build_responses_payload(
 ) -> Dict[str, Any]:
     if not plan.model:
         raise ValueError("A generative lane requires a model")
-
-    payload: Dict[str, Any] = {
-        "model": plan.model,
-        "input": query,
-        "tools": [dict(x_search_tool)],
-        "temperature": 0,
-        "max_turns": plan.max_turns,
-        "store": False,
-    }
-
     caps = _capabilities_for(plan.model, capabilities)
-    if plan.reasoning_effort in caps.reasoning_efforts:
-        payload["reasoning"] = {"effort": plan.reasoning_effort}
-
-    if caps.structured_outputs:
-        payload["text"] = {
-            "format": {
-                "type": "json_schema",
-                "name": "x_posts_stage_result",
-                "schema": X_POSTS_STAGE_SCHEMA,
-                "strict": True,
-            }
-        }
-
-    return payload
+    return build_xai_responses_payload(
+        query=query,
+        x_search_tool=x_search_tool,
+        model=plan.model,
+        max_turns=plan.max_turns,
+        store=resolve_store_flag(),
+        structured_output=caps.structured_outputs,
+        reasoning_effort=plan.reasoning_effort,
+        capabilities=capabilities,
+    )

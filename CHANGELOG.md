@@ -97,6 +97,9 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Fixed
 
+- Route production xAI Responses bodies and plan-builder tests through one
+  constructor (`build_xai_responses_payload`) so Fast/Smart/raw payload fields
+  cannot drift.
 - Read `GROK_PROXY_RETRIEVE_MODEL` / `GROK_PROXY_MCP_MODEL` from `config.py` and
   use that value for both `mcp_x_search.DEFAULT_MODEL` and the Smart Lane model
   in `retrieve_policy.get_routing_config()`.
