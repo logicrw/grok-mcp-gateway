@@ -323,3 +323,71 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 - 没有引入新依赖。
 - 没有把根目录模块打成 package（方向 D）。
 - 没有对真实 xAI 或本机 9996 端口做集成探测。
+
+---
+
+## 第二阶段记录
+
+- **日期**: 2026-08-22（紧接第一阶段 `d3a4c96`）
+- **红线**: 不改 MCP 协议、`x_retrieve` input/output schema、tool 名、removed-tool 错误码；公开 JSON 只修正错误数据或做纯加法（新 Prometheus 系列、request 多字段），不删字段。
+- **终点 commits**: `83c3854`、`a5a8cfa`（本文件为随后的 docs commit）
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **189 passed**（第一阶段结束 183）
+
+### 判断逻辑：为什么做这两件、不做别的
+
+额度最后一班，目标是「完整 2 件」而不是 5 个半成品。从第一阶段报告里按 **生产正确性 × 可验证性 × 不碰协议** 排序：
+
+| 候选 | 决定 | 理由 |
+| --- | --- | --- |
+| 方向 A 统一 Responses payload | **做，第一件** | P1-2 是最高杠杆的静默漂移：下次改 `store` / schema / reasoning 时，路由测试会绿、线上 `_x_search_payload` 不会。纯函数替换，不改 MCP schema。报告里已写验收条款。 |
+| P1-4 `sources` 去重 + P1-3 `error_result` 元数据 | **做，第二件** | 与第一阶段已修的 `posts` 去重是同一合并契约；error payload 在校验失败/上游失败时对 Agent 撒谎 `mode=semantic_research`。都是 payload 正确性，测试可钉死，shape 不删字段。 |
+| 方向 B `xhigh` | **放弃** | 没有安全的真实 grok-4.6 探活（会打账单、需要线上 token）。默认改 `xhigh` 是产品决策。只删 README 词是文档活，优先级低于会在下次改 payload 时咬人的双构造器。 |
+| 方向 C Hermes 叙事 | **放弃** | `HERMES_POLL_INTERVAL` 本来就没生效；import 脚本必须保留。纯文档/死 env 清理，不修运行时。 |
+| 方向 D 收包 | **放弃** | 1–2 人日重构，半途会留下双路径 import。A 刚把构造器收口，此时搬家是给 diff 添噪音。 |
+| 方向 E 录制 fixture | **放弃** | 需要一次真实 `x_retrieve` 采样和隐私审查，本班岗没有对外打 xAI。 |
+| P2 quality gate 漏记 target pipeline | **未做** | 只影响 `/metrics` 计数，不改检索结果。第二件已经覆盖两条 payload 契约，不再加第三条半相关改动。 |
+
+### 实际完成
+
+#### 1. 唯一 xAI Responses 构造器（`83c3854`）
+
+- 新增 `retrieve_policy.build_xai_responses_payload`：`model` / `tools` / `max_turns` / `store` / JSON schema / `reasoning.effort`。
+- `mcp_x_search._x_search_payload` 只做参数清洗，然后调用该构造器。
+- `build_responses_payload(plan=...)` 变成 RetrievalPlan 包装：`store` 走 `resolve_store_flag()`（默认 `False`），schema 仍按模型 `structured_outputs`。
+- 测试：
+  - Fast `latest_by_handle`：生产 body == plan builder，且无 `reasoning`。
+  - Smart `verify_claim`：生产 body == plan builder，且 `reasoning.effort=high`。
+  - Raw：无 `text` / `reasoning` / `max_turns`，即使传入 `reasoning_effort="high"` 也被能力表丢掉。
+  - `_call_x_search_result` 实际 POST 体与 plan builder 一致（monkeypatch `xai_responses.post`）。
+
+**行为对齐说明（刻意保持生产语义）**：structured output 仍由调用方 `_structured_output` 决定，而不是模型能力表。Raw 路径继续不挂 schema。reasoning 改为「effort 必须落在该模型 `DEFAULT_CAPABILITIES` 集合里」，对当前 4.5/4.6（`low/medium/high`）与 non-reasoning / composer 的结果与旧 `{low,medium,high} AND model_supports_reasoning_effort` 相同。
+
+#### 2. 合并 `sources` 去重 + 错误载荷 mode（`a5a8cfa`）
+
+- `merge_stage_payload` 对 `sources` 按 status ID（url 或 title）或裸 URL 先到先得，与 `items`/`posts` 一致。
+- `error_result` 先尝试 `build_retrieve_search_arguments`；成功则 `mode` 和 `request` 用真实元数据（含 `handles`/`count`/`target_status_ids` 等，对旧客户端是加法）。解析失败（超长 model、缺 query/handles）仍回退 `semantic_research`。
+- `retrieval_stages[0].name` **仍为** `stable_extract`：这是错误载荷里的历史字符串，改名会动公开 JSON 值，本班岗不碰。
+- 测试：同源 status 的 smart source 被丢、新 status 保留；`handles+sort=latest` 的 `error_result` 为 `latest_by_handle`；超长 model 的 MCP 错误仍为 `semantic_research`。
+
+### 中途放弃了什么
+
+- **没有**把 `xhigh` 写入能力表或 README 对齐（方向 B）。缺线上证据，默认档位不能猜。
+- **没有**删 `HERMES_POLL_INTERVAL` 或改 RFC（方向 C）。
+- **没有**开始 `retrieve/` 包迁移（方向 D）。
+- **没有**加 xAI fixture（方向 E）。
+- **没有**给 target pipeline 补 `mcp_x_retrieve_quality_gate_total`（P2-4）。
+- 做方向 A 时一度考虑让 schema 也跟 `caps.structured_outputs` 走：那会改变「调用方显式 `_structured_output=True`」的生产语义，立即止损，schema 继续由 flag 控制。
+
+### 给下一任的交接
+
+1. **先读这三份，不要从 RFC 开工**：`HEALTH-REPORT.md`（本文件）→ `docs/retrieval-architecture.md` → 代码。`docs/rfc-grok-46-and-two-tier-routing.md` 仍把 Hermes 当核心、仍写 `xhigh` 已启用，**不是**运行时事实。
+2. **payload 入口现在只有一个**：改 xAI 请求体只动 `retrieve_policy.build_xai_responses_payload`。若 Fast 测绿、线上 400，先看 `_x_search_payload` 是否又手写了字段。
+3. **下一件仍建议方向 B 的「探活或删文档」**，不要默认切 `xhigh`。没有 200 + usage 证据就只改 README/architecture，把 `xhigh` 从「会挂载」改成「未发送」。`grep -n xhigh README.md README.zh-CN.md docs/retrieval-architecture.md retrieve_policy.py mcp_x_search.py`。
+4. **方向 C 可以当小清扫 PR**：删 `config.py:82-83` 的 `HERMES_POLL_INTERVAL`；RFC 顶部标 superseded；consult 文档改成 `python main.py --login`。不要动 `load_from_hermes` / `scripts/import_xai_oauth.py`。`tests/test_oauth_login.py::test_read_local_state_never_implicitly_bootstraps_from_hermes` 是回归锚。
+5. **方向 D 只能在 A 稳定之后做**，一次 PR 搬完 `retrieve_*.py`，不要兼容层留一版。公开 MCP 名称和环境变量名不要一起改。
+6. **方向 E 仍然缺**：全套 189 个测试都是 mock。冷启动一条脱敏 fixture 比再重构模块更值钱，但必须先有一次真实采样并跑 secrets scan。
+7. **已知仍撒谎/仍不对称的点**（未修，有意留下）：
+   - 错误载荷 stage 名仍是 `stable_extract`（`mcp_retrieve.py` `error_result`）。
+   - Fast 失败且预算 < 35s 直接抛错；Smart 失败写 warning 再走 raw（P2-9）。
+   - Target pipeline 不算 quality-gate 指标（P2-4）。
+8. **验证口令**：`ruff check . && basedpyright && pytest -q -W error`。不要只跑单文件就宣称完成。
