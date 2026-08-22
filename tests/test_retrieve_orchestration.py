@@ -166,6 +166,22 @@ def test_model_override_has_a_hard_length_limit():
 
     assert response["result"]["isError"] is True
     assert "model must be at most 128 characters" in response["result"]["structuredContent"]["warnings"][0]
+    assert response["result"]["structuredContent"]["mode"] == "semantic_research"
+
+
+def test_error_result_uses_parsed_latest_by_handle_mode():
+    result = mcp_x_search.mcp_retrieve.error_result(
+        {"handles": ["xai"], "sort": "latest", "count": 5},
+        "upstream failed",
+    )
+    payload = result["structuredContent"]
+
+    assert result["isError"] is True
+    assert payload["mode"] == "latest_by_handle"
+    assert payload["request"]["mode"] == "latest_by_handle"
+    assert payload["request"]["handles"] == ["xai"]
+    assert payload["request"]["count"] == 5
+    assert payload["retrieval_status"] == "error"
 
 
 def test_exhausted_oembed_budget_is_visible_as_warning():

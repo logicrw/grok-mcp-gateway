@@ -18,6 +18,7 @@ from retrieve_metrics import (
 )
 from retrieve_oembed import merge_oembed_posts, target_status_ids_needing_text
 from retrieve_payload import (
+    _request_metadata,
     add_target_citation_items,
     assemble_payload,
     finalize_payload,
@@ -427,22 +428,15 @@ def _failed_stage_payload(metadata: Dict[str, Any], *, stage_name: str, model: s
 
 
 def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
-    query = arguments.get("query") if isinstance(arguments.get("query"), str) else None
-    raw_handles = arguments.get("handles")
-    handles: list[Any] = raw_handles if isinstance(raw_handles, list) else []
+    metadata = _error_metadata(arguments)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "tool": RETRIEVE_TOOL_NAME,
         "backend": BACKEND,
         "timeline_verified": False,
         "source_limit": SOURCE_LIMIT,
-        "mode": "semantic_research",
-        "request": {
-            "intent": arguments.get("intent") if isinstance(arguments.get("intent"), str) else "auto",
-            "mode": "semantic_research",
-            "handles": [str(handle).lstrip("@") for handle in handles if isinstance(handle, str)],
-            "query": query,
-        },
+        "mode": metadata["mode"],
+        "request": _request_metadata(metadata),
         "retrieval_stages": [{"name": "stable_extract", "model": arguments.get("model") or "unknown", "status": "failed"}],
         "retrieval_status": "error",
         "models_used": [],
@@ -457,3 +451,26 @@ def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
     record_retrieval_status("error")
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": True}
+
+
+def _error_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        _, metadata = build_retrieve_search_arguments(dict(arguments))
+        return metadata
+    except Exception:
+        query = arguments.get("query") if isinstance(arguments.get("query"), str) else None
+        raw_handles = arguments.get("handles")
+        handles = (
+            [str(handle).lstrip("@") for handle in raw_handles if isinstance(handle, str)]
+            if isinstance(raw_handles, list)
+            else []
+        )
+        intent = arguments.get("intent") if isinstance(arguments.get("intent"), str) else "auto"
+        return {
+            "mode": "semantic_research",
+            "intent": intent or "auto",
+            "handles": handles,
+            "query": query,
+            "excluded_handles": [],
+            "target_status_ids": [],
+        }

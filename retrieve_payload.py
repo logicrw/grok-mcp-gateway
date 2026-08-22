@@ -103,7 +103,13 @@ def merge_stage_payload(payload: Dict[str, Any], stage_payload: Dict[str, Any]) 
         seen_posts.add(key)
         payload["posts"].append(post)
     payload["groups"] = _groups(payload["items"])
-    payload["sources"].extend(stage_payload["sources"])
+    seen_sources = {_source_key(source) for source in payload["sources"]}
+    for source in stage_payload["sources"]:
+        key = _source_key(source)
+        if key in seen_sources:
+            continue
+        seen_sources.add(key)
+        payload["sources"].append(source)
     payload["warnings"].extend(stage_payload["warnings"])
     payload["retrieval_stages"].extend(stage_payload["retrieval_stages"])
     for model in stage_payload["models_used"]:
@@ -296,3 +302,17 @@ def _post_key(post: Any) -> str:
     if url and url.strip():
         return f"url:{url.strip()}"
     return f"text:{post.get('author')}::{post.get('text')}"
+
+
+def _source_key(source: Any) -> str:
+    if not isinstance(source, dict):
+        return f"non-dict:{id(source)}"
+    url = source.get("url") if isinstance(source.get("url"), str) else None
+    status_id = status_id_from_url(url) or status_id_from_url(
+        str(source.get("title") or "") if source.get("title") is not None else None
+    )
+    if status_id:
+        return f"status:{status_id}"
+    if url and url.strip():
+        return f"url:{url.strip()}"
+    return f"title:{source.get('title')}"

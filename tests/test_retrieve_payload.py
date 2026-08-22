@@ -64,3 +64,32 @@ def test_merge_stage_payload_deduplicates_posts_by_status_id():
     assert [item["text"] for item in payload["items"]] == ["fast", "extra"]
     assert payload["models_used"] == ["fast", "smart"]
     assert len(payload["retrieval_stages"]) == 2
+
+
+def test_merge_stage_payload_deduplicates_sources_by_status_id():
+    target = "2071385784154759468"
+    extra = "9999999999999999999"
+    payload = {
+        "items": [],
+        "posts": [],
+        "groups": {"primary": [], "supporting": [], "reactions": [], "rejected_candidates": []},
+        "sources": [{"url": f"https://x.com/xai/status/{target}", "title": "fast"}],
+        "warnings": [],
+        "retrieval_stages": [{"name": "fast_extract", "model": "fast", "status": "success"}],
+        "models_used": ["fast"],
+    }
+    stage_payload = {
+        "items": [],
+        "posts": [],
+        "sources": [
+            {"url": f"https://x.com/xai/status/{target}", "title": "smart"},
+            {"url": f"https://x.com/xai/status/{extra}", "title": "extra"},
+        ],
+        "warnings": [],
+        "retrieval_stages": [{"name": "smart_escalation", "model": "smart", "status": "success"}],
+        "models_used": ["smart"],
+    }
+
+    merge_stage_payload(payload, stage_payload)
+
+    assert [source["title"] for source in payload["sources"]] == ["fast", "extra"]
