@@ -95,7 +95,13 @@ def merge_stage_payload(payload: Dict[str, Any], stage_payload: Dict[str, Any]) 
         if key not in seen:
             seen.add(key)
             payload["items"].append(item)
-    payload["posts"].extend(stage_payload["posts"])
+    seen_posts = {_post_key(post) for post in payload["posts"]}
+    for post in stage_payload["posts"]:
+        key = _post_key(post)
+        if key in seen_posts:
+            continue
+        seen_posts.add(key)
+        payload["posts"].append(post)
     payload["groups"] = _groups(payload["items"])
     payload["sources"].extend(stage_payload["sources"])
     payload["warnings"].extend(stage_payload["warnings"])
@@ -278,3 +284,15 @@ def _request_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 def _item_key(item: Dict[str, Any]) -> str:
     return str(item.get("url") or f"{item.get('author')}::{item.get('text')}")
+
+
+def _post_key(post: Any) -> str:
+    if not isinstance(post, dict):
+        return f"non-dict:{id(post)}"
+    url = post.get("url") if isinstance(post.get("url"), str) else None
+    status_id = status_id_from_url(url)
+    if status_id:
+        return f"status:{status_id}"
+    if url and url.strip():
+        return f"url:{url.strip()}"
+    return f"text:{post.get('author')}::{post.get('text')}"

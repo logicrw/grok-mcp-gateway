@@ -297,7 +297,7 @@ def _make_callback_handler(callback_state: _CallbackState):
         server_version = "GrokOAuthCallback/1.0"
         sys_version = ""
 
-        def log_message(self, _format: str, *args: object) -> None:
+        def log_message(self, format: str, *args: object) -> None:
             # BaseHTTPRequestHandler logs the raw request line, which would leak
             # authorization codes/state into stderr. Intentionally disabled.
             return
@@ -502,10 +502,15 @@ def _parse_expires_in(value: object) -> Optional[int]:
         return None
     if isinstance(value, bool):
         raise OAuthLoginError("Token response contains an invalid expires_in value.")
-    try:
-        expires_in = int(value)
-    except (TypeError, ValueError) as exc:
-        raise OAuthLoginError("Token response contains an invalid expires_in value.") from exc
+    if isinstance(value, int):
+        expires_in = value
+    elif isinstance(value, str):
+        try:
+            expires_in = int(value.strip())
+        except ValueError as exc:
+            raise OAuthLoginError("Token response contains an invalid expires_in value.") from exc
+    else:
+        raise OAuthLoginError("Token response contains an invalid expires_in value.")
     if expires_in <= 0:
         raise OAuthLoginError("Token response contains a non-positive expires_in value.")
     return expires_in

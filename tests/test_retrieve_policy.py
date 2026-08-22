@@ -25,8 +25,10 @@ def test_reasoning_effort_for_route(metadata, expected):
     assert reasoning_effort_for(metadata) == expected
 
 
-def test_reasoning_effort_is_only_enabled_for_grok_4_5():
+def test_reasoning_effort_is_only_enabled_for_known_reasoning_models():
     assert model_supports_reasoning_effort("grok-4.5") is True
+    assert model_supports_reasoning_effort("grok-4.6") is True
+    assert model_supports_reasoning_effort("grok-4.6-latest") is True
     assert model_supports_reasoning_effort("grok-composer-2.5-fast") is False
     assert model_supports_reasoning_effort("custom-model") is False
 

@@ -23,6 +23,7 @@ def test_metrics_include_stage_usage_timeout_and_final_status():
         reasoning_tokens=12,
         x_search_calls=3,
     )
+    retrieve_metrics.record_route(lane="fast", objective_mode="latest_by_handle", escalated=False)
 
     lines = "\n".join(retrieve_metrics.metrics_lines())
 
@@ -32,6 +33,10 @@ def test_metrics_include_stage_usage_timeout_and_final_status():
     assert 'mcp_x_retrieve_timeout_total{type="stage"}' in lines
     assert 'mcp_x_retrieve_reasoning_tokens_total{stage="stable_extract",model_role="stable"} 12' in lines
     assert 'mcp_x_retrieve_x_search_calls_total{stage="stable_extract",model_role="stable"} 3' in lines
+    assert (
+        'mcp_x_retrieve_route_total{lane="fast",objective_mode="latest_by_handle",escalated="false"}'
+        in lines
+    )
 
 
 def test_custom_model_names_cannot_expand_metric_cardinality():

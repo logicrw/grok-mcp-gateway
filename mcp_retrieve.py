@@ -25,7 +25,6 @@ from retrieve_payload import (
     merge_stage_payload,
     raw_decision,
     raw_expansion_query,
-    should_run_raw,
     target_fallback_query,
 )
 from retrieve_policy import (
@@ -34,7 +33,6 @@ from retrieve_policy import (
     _smart_effort,
     evaluate_quality,
     get_routing_config,
-    reasoning_effort_for,
     resolve_plan,
     resolve_target_fallback_plan,
     should_escalate_to_smart,

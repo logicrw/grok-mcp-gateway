@@ -9,7 +9,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import token_manager
 from retrieve_policy import (
-    RoutingConfig,
     build_responses_payload,
     evaluate_quality,
     resolve_plan,

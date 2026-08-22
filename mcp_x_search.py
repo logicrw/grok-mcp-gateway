@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections import defaultdict
 from typing import Any, Dict, Optional
@@ -21,11 +20,7 @@ LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
 RETRIEVE_TOOL_NAME = mcp_retrieve.RETRIEVE_TOOL_NAME
 TOOL_NAME = X_SEARCH_TOOL_NAME
 SERVER_VERSION = "0.1.0"
-DEFAULT_MODEL = (
-    os.getenv("GROK_PROXY_RETRIEVE_MODEL")
-    or os.getenv("GROK_PROXY_MCP_MODEL")
-    or "grok-4.6"
-).strip() or "grok-4.6"
+DEFAULT_MODEL = config.GROK_PROXY_RETRIEVE_MODEL
 TOOL_NAMES = {RETRIEVE_TOOL_NAME}
 REMOVED_TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
 X_SEARCH_INPUT_MAX_CHARS = 8000

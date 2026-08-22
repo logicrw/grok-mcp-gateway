@@ -120,11 +120,11 @@ curl -sS http://127.0.0.1:9996/health
 ### 4. Background Service (macOS LaunchAgent)
 
 
-To run the gateway as a permanent background service on macOS:
+To run the gateway as a permanent background service on macOS, copy the LaunchAgent example from `services/service-examples.md` into `~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist`, replace the `YOUR_USERNAME` placeholders, then load it:
 
 ```bash
-cp services/io.logicrw.grok-mcp-gateway.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl kickstart -k gui/$(id -u)/io.logicrw.grok-mcp-gateway
 ```
 
 ---

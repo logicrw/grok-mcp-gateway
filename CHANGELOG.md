@@ -97,6 +97,18 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Fixed
 
+- Read `GROK_PROXY_RETRIEVE_MODEL` / `GROK_PROXY_MCP_MODEL` from `config.py` and
+  use that value for both `mcp_x_search.DEFAULT_MODEL` and the Smart Lane model
+  in `retrieve_policy.get_routing_config()`.
+- Restore BasedPyright on `oauth_flow.CallbackHandler.log_message` and
+  `_parse_expires_in` so the CI type gate is green.
+- Export recorded `mcp_x_retrieve_route_total` series from
+  `retrieve_metrics.metrics_lines()`.
+- Deduplicate merged `posts` by status ID/URL in
+  `retrieve_payload.merge_stage_payload`.
+- Point README LaunchAgent install instructions at
+  `services/service-examples.md` instead of a missing plist file.
+
 - Preserve the exception type when an upstream timeout has no message, and let
   explicit status-ID retrieval continue to the public oEmbed fallback after a
   stable X Search timeout instead of failing before deterministic recovery.

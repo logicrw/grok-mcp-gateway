@@ -43,3 +43,31 @@ def test_retrieve_model_override_keeps_precedence():
         )
         == "grok-retrieve"
     )
+
+
+def _read_smart_model(env_overrides: dict[str, str]) -> str:
+    env = os.environ.copy()
+    for key in MODEL_ENV_KEYS:
+        env.pop(key, None)
+    env.update(env_overrides)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from retrieve_policy import get_routing_config; print(get_routing_config().smart_model)",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def test_retrieve_model_override_drives_smart_lane_routing():
+    assert _read_smart_model({"GROK_PROXY_RETRIEVE_MODEL": "grok-retrieve"}) == "grok-retrieve"
+
+
+def test_legacy_model_override_drives_smart_lane_routing():
+    assert _read_smart_model({"GROK_PROXY_MCP_MODEL": "grok-legacy"}) == "grok-legacy"

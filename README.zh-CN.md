@@ -120,11 +120,11 @@ curl -sS http://127.0.0.1:9996/health
 ### 4. 配置为后台常驻服务（macOS LaunchAgent）
 
 
-在 macOS 上作为后台守护进程常驻运行：
+在 macOS 上作为后台守护进程常驻运行时，请把 `services/service-examples.md` 中的 LaunchAgent 示例复制到 `~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist`，替换其中的 `YOUR_USERNAME` 占位路径后再加载：
 
 ```bash
-cp services/io.logicrw.grok-mcp-gateway.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.logicrw.grok-mcp-gateway.plist
+launchctl kickstart -k gui/$(id -u)/io.logicrw.grok-mcp-gateway
 ```
 
 ---

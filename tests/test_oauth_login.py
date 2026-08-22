@@ -221,6 +221,18 @@ def test_build_token_state_requires_refresh_token():
         )
 
 
+def test_parse_expires_in_accepts_int_and_numeric_string():
+    assert oauth_flow._parse_expires_in(7200) == 7200
+    assert oauth_flow._parse_expires_in("3600") == 3600
+    assert oauth_flow._parse_expires_in(None) is None
+
+
+@pytest.mark.parametrize("value", [True, False, 0, -1, "not-a-number", 3.5, {}, []])
+def test_parse_expires_in_rejects_invalid_values(value):
+    with pytest.raises(oauth_flow.OAuthLoginError, match="expires_in"):
+        oauth_flow._parse_expires_in(value)
+
+
 def test_persist_token_response_uses_token_manager_private_atomic_storage(tmp_path, monkeypatch):
     state_path = tmp_path / "grok-oauth-proxy" / "auth_state.json"
     monkeypatch.setattr(token_manager, "LOCAL_AUTH_PATH", state_path)

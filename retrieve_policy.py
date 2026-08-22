@@ -46,7 +46,7 @@ class RoutingConfig:
 def get_routing_config() -> RoutingConfig:
     """Return RoutingConfig populated from current config module values."""
     return RoutingConfig(
-        smart_model=getattr(config, "GROK_PROXY_RETRIEVE_MODEL", "grok-4.6") or "grok-4.6",
+        smart_model=config.GROK_PROXY_RETRIEVE_MODEL or "grok-4.6",
         fast_model=config.GROK_PROXY_FAST_MODEL,
         auto_tiering=config.GROK_PROXY_ENABLE_AUTO_TIERING,
         fast_max_turns=config.GROK_PROXY_FAST_MAX_TURNS,

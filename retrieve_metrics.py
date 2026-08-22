@@ -100,6 +100,18 @@ def metrics_lines() -> list[str]:
         lines.append(
             f'mcp_x_retrieve_error_total{{stage="{_label(stage)}",kind="{_label(kind)}"}} {count}'
         )
+    lines.extend(
+        [
+            "# HELP mcp_x_retrieve_route_total Retrieval routes by lane, objective, and escalation",
+            "# TYPE mcp_x_retrieve_route_total counter",
+        ]
+    )
+    for (lane, objective_mode, escalated), count in sorted(_route_count.items()):
+        lines.append(
+            "mcp_x_retrieve_route_total{"
+            f'lane="{_label(lane)}",objective_mode="{_label(objective_mode)}",'
+            f'escalated="{_label(escalated)}"}} {count}'
+        )
     lines.extend(_usage_lines("reasoning_tokens", _reasoning_tokens))
     lines.extend(_usage_lines("x_search_calls", _x_search_calls))
     if any(_cost_ticks.values()):

@@ -118,6 +118,11 @@ GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY: int = _env_int(
 )
 
 # v2.1 Adaptive routing and execution lane configuration
+GROK_PROXY_RETRIEVE_MODEL: str = (
+    os.getenv("GROK_PROXY_RETRIEVE_MODEL")
+    or os.getenv("GROK_PROXY_MCP_MODEL")
+    or "grok-4.6"
+).strip() or "grok-4.6"
 GROK_PROXY_FAST_MODEL: str = (
     os.getenv("GROK_PROXY_FAST_MODEL", "grok-4.20-0309-non-reasoning").strip()
     or "grok-4.20-0309-non-reasoning"
