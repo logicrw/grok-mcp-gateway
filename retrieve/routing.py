@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 
 import config
 import mcp_posts
-from retrieve_schema import INTENTS, RETRIEVE_ARGUMENT_KEYS, RETRIEVE_MODEL_MAX_CHARS
-from retrieve_text_parser import extract_status_targets
+from retrieve.schema import INTENTS, RETRIEVE_ARGUMENT_KEYS, RETRIEVE_MODEL_MAX_CHARS
+from retrieve.text_parser import extract_status_targets
 
 
 def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:

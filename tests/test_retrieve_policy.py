@@ -7,14 +7,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import mcp_x_search
-from retrieve_policy import (
+from retrieve.policy import (
     RequestBudget,
     build_xai_responses_payload,
     model_supports_reasoning_effort,
     reasoning_effort_for,
     resolve_plan,
 )
-from retrieve_stages import StageTimeout, run_search_stage
+from retrieve.stages import StageTimeout, run_search_stage
 from xai_responses import ResponsesResult
 
 

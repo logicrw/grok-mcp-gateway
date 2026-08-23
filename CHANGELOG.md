@@ -46,6 +46,10 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Changed
 
+- Move retrieval internals into the `retrieve/` package and split MCP tool
+  registration (`mcp_tools.py`) from xAI x_search I/O (`retrieve/x_search.py`).
+  `mcp_x_search.py` remains a compatibility facade. The
+  `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` environment variable is unchanged.
 - Document Smart Lane reasoning as `low` / `medium` / `high` only. `xhigh` is
   not in the capability table and is not sent on the Responses payload.
 - Remove unused `HERMES_POLL_INTERVAL`. The daemon never polled Hermes

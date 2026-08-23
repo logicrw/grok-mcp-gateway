@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 import xai_responses
 from error_sanitizer import sanitize_text
-from retrieve_metrics import (
+from retrieve.metrics import (
     metrics_lines as orchestration_metrics_lines,
     record_error,
     record_retrieval_status,
@@ -16,8 +16,8 @@ from retrieve_metrics import (
     record_stage,
     record_timeout,
 )
-from retrieve_oembed import merge_oembed_posts, target_status_ids_needing_text
-from retrieve_payload import (
+from retrieve.oembed import merge_oembed_posts, target_status_ids_needing_text
+from retrieve.payload import (
     _request_metadata,
     add_target_citation_items,
     assemble_payload,
@@ -28,7 +28,7 @@ from retrieve_payload import (
     raw_expansion_query,
     target_fallback_query,
 )
-from retrieve_policy import (
+from retrieve.policy import (
     RequestBudget,
     RetrievalPlan,
     _smart_effort,
@@ -38,9 +38,9 @@ from retrieve_policy import (
     resolve_target_fallback_plan,
     should_escalate_to_smart,
 )
-from retrieve_routing import build_retrieve_search_arguments
-from retrieve_schema import BACKEND, RAW_MODEL, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
-from retrieve_stages import SearchCaller, run_search_stage
+from retrieve.routing import build_retrieve_search_arguments
+from retrieve.schema import BACKEND, RAW_MODEL, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
+from retrieve.stages import SearchCaller, run_search_stage
 from x_oembed import OEMBED_TIMEOUT_SECONDS, fetch_oembed_posts
 
 _quality_gate_counts: defaultdict[str, int] = defaultdict(int)
@@ -397,7 +397,7 @@ def _append_oembed_stage(payload: Dict[str, Any], status_ids: list[str], status:
 
 
 def _empty_payload(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    from retrieve_payload import _groups, _request_metadata
+    from retrieve.payload import _groups, _request_metadata
 
     return {
         "schema_version": SCHEMA_VERSION,

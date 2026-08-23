@@ -14,7 +14,7 @@ select = ["E4", "E7", "E9", "F", "B"]
 [tool.basedpyright]
 typeCheckingMode = "standard"
 pythonVersion = "3.10"
-include = ["*.py", "scripts", "tests"]
+include = ["*.py", "retrieve", "scripts", "tests"]
 exclude = ["work/**", "outputs/**", ".agpair/**"]
 reportMissingTypeStubs = false
 
@@ -25,3 +25,4 @@ reportOptionalSubscript = "none"
 reportOptionalMemberAccess = "none"
 reportCallIssue = "none"
 reportAttributeAccessIssue = "none"
+reportOperatorIssue = "none"

@@ -10,14 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import mcp_x_search
 import token_manager
 import xai_responses
-from retrieve_policy import (
+from retrieve.policy import (
     build_responses_payload,
     build_xai_responses_payload,
     evaluate_quality,
     resolve_plan,
     should_escalate_to_smart,
 )
-from retrieve_schema import RAW_MODEL
+from retrieve.schema import RAW_MODEL
 
 
 class RoutingV2Tests(unittest.TestCase):

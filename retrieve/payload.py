@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 
 import mcp_posts
 import xai_responses
-from retrieve_schema import BACKEND, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
-from retrieve_text_parser import parse_raw_posts_from_text, status_id_from_url
+from retrieve.schema import BACKEND, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
+from retrieve.text_parser import parse_raw_posts_from_text, status_id_from_url
 
 
 def assemble_payload(result: xai_responses.ResponsesResult, metadata: Dict[str, Any], *, stage_name: str) -> Dict[str, Any]:

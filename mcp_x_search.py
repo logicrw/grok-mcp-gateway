@@ -1,233 +1,75 @@
-"""Minimal MCP server for xAI X Search through the Grok MCP Gateway."""
+"""Compatibility facade over mcp_tools and retrieve.x_search.
+
+New code should import mcp_tools. This module keeps the historical module
+path, stdio entrypoint, and test monkeypatch surface.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import time
-from collections import defaultdict
-from typing import Any, Dict, Optional
 
 import config
 import mcp_posts
-import mcp_retrieve
-import xai_responses
-from retrieve_policy import build_xai_responses_payload, resolve_store_flag
-from retrieve_schema import RETRIEVE_MODEL_MAX_CHARS, retrieve_tool_definition
+import mcp_tools
+from retrieve import pipeline as mcp_retrieve
+from retrieve import x_search
+from retrieve.x_search import (
+    X_SEARCH_ARGUMENT_KEYS,
+    X_SEARCH_INPUT_MAX_CHARS,
+    _build_x_search_tool,
+    _call_x_search_result,
+    _extract_output_text,
+    _record_x_search,
+    _x_search_payload,
+)
 
-X_SEARCH_TOOL_NAME = "x_search"
-POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
-LATEST_POSTS_TOOL_NAME = mcp_posts.LATEST_POSTS_TOOL_NAME
-RETRIEVE_TOOL_NAME = mcp_retrieve.RETRIEVE_TOOL_NAME
-TOOL_NAME = X_SEARCH_TOOL_NAME
-SERVER_VERSION = "0.1.0"
-DEFAULT_MODEL = config.GROK_PROXY_RETRIEVE_MODEL
-TOOL_NAMES = {RETRIEVE_TOOL_NAME}
-REMOVED_TOOL_NAMES = {X_SEARCH_TOOL_NAME, POSTS_TOOL_NAME, LATEST_POSTS_TOOL_NAME}
-X_SEARCH_INPUT_MAX_CHARS = 8000
-X_SEARCH_ARGUMENT_KEYS = {
-    "query",
-    "allowed_x_handles",
-    "excluded_x_handles",
-    "from_date",
-    "to_date",
-    "enable_image_understanding",
-    "enable_video_understanding",
-    "model",
-    "raw",
-    "_reasoning_effort",
-    "_max_turns",
-    "_store",
-    "_structured_output",
-}
+__all__ = [
+    "DEFAULT_MODEL",
+    "X_SEARCH_ARGUMENT_KEYS",
+    "X_SEARCH_INPUT_MAX_CHARS",
+    "X_SEARCH_TOOL_NAME",
+    "_build_x_search_tool",
+    "_call_x_search_result",
+    "_extract_output_text",
+    "_record_x_search",
+    "_x_search_payload",
+    "call_tool",
+    "config",
+    "mcp_posts",
+    "mcp_retrieve",
+    "metrics_lines",
+    "tool_definitions",
+]
 
-_x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
-_x_search_counts: defaultdict[str, int] = defaultdict(int)
-_x_search_total_duration: float = 0.0
-_x_search_total_count: int = 0
-_x_search_active: int = 0
+X_SEARCH_TOOL_NAME = mcp_tools.X_SEARCH_TOOL_NAME
+POSTS_TOOL_NAME = mcp_tools.POSTS_TOOL_NAME
+LATEST_POSTS_TOOL_NAME = mcp_tools.LATEST_POSTS_TOOL_NAME
+RETRIEVE_TOOL_NAME = mcp_tools.RETRIEVE_TOOL_NAME
+TOOL_NAME = x_search.TOOL_NAME
+SERVER_VERSION = mcp_tools.SERVER_VERSION
+DEFAULT_MODEL = mcp_tools.DEFAULT_MODEL
+TOOL_NAMES = mcp_tools.TOOL_NAMES
+REMOVED_TOOL_NAMES = mcp_tools.REMOVED_TOOL_NAMES
+
+tool_enabled = mcp_tools.tool_enabled
+_tool_enabled = mcp_tools.tool_enabled
+tool_definitions = mcp_tools.tool_definitions
+_tool_definitions = mcp_tools.tool_definitions
+tool_removed = mcp_tools.tool_removed
+tool_error_result = mcp_tools.tool_error_result
+metrics_lines = mcp_tools.metrics_lines
+call_tool = mcp_tools.call_tool
+_handle = mcp_tools._handle
 
 _compile_time_range = mcp_posts.compile_time_range
 _build_posts_search_arguments = mcp_posts.build_posts_search_arguments
 _build_latest_posts_search_arguments = mcp_posts.build_latest_posts_search_arguments
 
 
-def tool_enabled(tool_name: str) -> bool:
-    return tool_name.lower() in config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST
-
-
-_tool_enabled = tool_enabled
-
-
-def tool_definitions() -> list[Dict[str, Any]]:
-    definitions = [retrieve_tool_definition(DEFAULT_MODEL)]
-    return [definition for definition in definitions if tool_enabled(str(definition["name"]))]
-
-
-_tool_definitions = tool_definitions
-
-
-_clean_handle_list = mcp_posts.clean_handle_list
-_clean_iso8601_date = mcp_posts.clean_iso8601_date
-_validate_date_order = mcp_posts.validate_date_order
-
-
-def _build_x_search_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    tool: Dict[str, Any] = {"type": TOOL_NAME}
-
-    allowed_handles = _clean_handle_list(arguments, "allowed_x_handles")
-    excluded_handles = _clean_handle_list(arguments, "excluded_x_handles")
-    if allowed_handles and excluded_handles:
-        raise ValueError("allowed_x_handles and excluded_x_handles cannot be used together")
-    if allowed_handles:
-        tool["allowed_x_handles"] = allowed_handles
-    if excluded_handles:
-        tool["excluded_x_handles"] = excluded_handles
-
-    from_date = _clean_iso8601_date(arguments, "from_date")
-    to_date = _clean_iso8601_date(arguments, "to_date")
-    _validate_date_order(from_date, to_date)
-    if from_date:
-        tool["from_date"] = from_date
-    if to_date:
-        tool["to_date"] = to_date
-
-    if arguments.get("enable_image_understanding") is True:
-        tool["enable_image_understanding"] = True
-    if arguments.get("enable_video_understanding") is True:
-        tool["enable_video_understanding"] = True
-
-    return tool
-
-
-def _extract_output_text(response: Dict[str, Any]) -> str:
-    return xai_responses._extract_output_text(response)
-
-
-def _record_x_search(status: str, duration: float) -> None:
-    global _x_search_total_count, _x_search_total_duration
-    _x_search_counts[status] += 1
-    _x_search_total_count += 1
-    _x_search_total_duration += duration
-
-
-def metrics_lines() -> list[str]:
-    lines = [
-        "# HELP mcp_x_retrieve_requests_total Total MCP x_retrieve tool calls by status",
-        "# TYPE mcp_x_retrieve_requests_total counter",
-    ]
-    for status in ("success", "error"):
-        lines.append(f'mcp_x_retrieve_requests_total{{status="{status}"}} {_x_search_counts[status]}')
-    lines.extend(
-        [
-            "# HELP mcp_x_retrieve_request_duration_seconds_total Total MCP x_retrieve call duration",
-            "# TYPE mcp_x_retrieve_request_duration_seconds_total counter",
-            f"mcp_x_retrieve_request_duration_seconds_total {_x_search_total_duration}",
-            "# HELP mcp_x_retrieve_request_count_total Total MCP x_retrieve call count",
-            "# TYPE mcp_x_retrieve_request_count_total counter",
-            f"mcp_x_retrieve_request_count_total {_x_search_total_count}",
-            "# HELP mcp_x_retrieve_active_requests Active MCP x_retrieve calls",
-            "# TYPE mcp_x_retrieve_active_requests gauge",
-            f"mcp_x_retrieve_active_requests {_x_search_active}",
-            "# HELP mcp_x_retrieve_concurrency_limit Configured MCP x_retrieve concurrency limit",
-            "# TYPE mcp_x_retrieve_concurrency_limit gauge",
-            f"mcp_x_retrieve_concurrency_limit {config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY}",
-        ]
-    )
-    lines.extend(mcp_retrieve.metrics_lines())
-    return lines
-
-
-def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    unknown = set(arguments) - X_SEARCH_ARGUMENT_KEYS
-    if unknown:
-        raise ValueError(f"unsupported argument keys: {', '.join(sorted(unknown))}")
-    query_value = arguments.get("query")
-    if not isinstance(query_value, str):
-        raise ValueError("query must be a string")
-    query = query_value.strip()
-    if not query:
-        raise ValueError("query is required")
-    if len(query) > X_SEARCH_INPUT_MAX_CHARS:
-        raise ValueError(f"query must be at most {X_SEARCH_INPUT_MAX_CHARS} characters")
-
-    model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    if len(model) > RETRIEVE_MODEL_MAX_CHARS:
-        raise ValueError(f"model must be at most {RETRIEVE_MODEL_MAX_CHARS} characters")
-
-    max_turns = arguments.get("_max_turns")
-    if not (isinstance(max_turns, int) and max_turns > 0):
-        max_turns = None
-
-    store_arg = arguments.get("_store")
-    store = resolve_store_flag(bool(store_arg) if store_arg is not None else None)
-
-    reasoning_effort = arguments.get("_reasoning_effort")
-    if not isinstance(reasoning_effort, str):
-        reasoning_effort = None
-
-    return build_xai_responses_payload(
-        query=query,
-        x_search_tool=_build_x_search_tool(arguments),
-        model=model,
-        max_turns=max_turns,
-        store=store,
-        structured_output=bool(arguments.get("_structured_output")),
-        reasoning_effort=reasoning_effort,
-    )
-
-
-async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
-    async with _x_search_semaphore:
-        return await xai_responses.post(_x_search_payload(arguments))
-
-
-def tool_removed(tool_name: str) -> bool:
-    return tool_name in REMOVED_TOOL_NAMES
-
-
-def tool_error_result(tool_name: str, arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
-    if tool_name == RETRIEVE_TOOL_NAME:
-        retrieve_arguments = dict(arguments)
-        requested_model = retrieve_arguments.get("model")
-        model = requested_model.strip() if isinstance(requested_model, str) else ""
-        if model:
-            retrieve_arguments["model"] = model[:RETRIEVE_MODEL_MAX_CHARS]
-        else:
-            retrieve_arguments.pop("model", None)
-        return mcp_retrieve.error_result(retrieve_arguments, error_text)
-    return {"content": [{"type": "text", "text": f"{tool_name} failed: {error_text}"}], "isError": True}
-
-
-async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    start = time.monotonic()
-    global _x_search_active
-    _x_search_active += 1
-    try:
-        if tool_name != RETRIEVE_TOOL_NAME:
-            raise ValueError(f"tool removed in vNext: {tool_name}. Use x_retrieve.")
-        retrieve_arguments = dict(arguments)
-        model_value = retrieve_arguments.get("model")
-        if model_value is not None and not isinstance(model_value, str):
-            raise ValueError("model must be a string")
-        requested_model = model_value.strip() if isinstance(model_value, str) else ""
-        if requested_model:
-            retrieve_arguments["model"] = requested_model
-        else:
-            retrieve_arguments.pop("model", None)
-        result = await mcp_retrieve.call_retrieve(retrieve_arguments, search=_call_x_search_result)
-        _record_x_search("success", time.monotonic() - start)
-        return result
-    except Exception:
-        _record_x_search("error", time.monotonic() - start)
-        raise
-    finally:
-        _x_search_active -= 1
-
-
-async def _handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    import mcp_server
-
-    return await mcp_server.handle(request)
+def __getattr__(name: str) -> object:
+    if name in {"_x_search_total_count", "_x_search_total_duration", "_x_search_active", "_x_search_counts"}:
+        return getattr(x_search, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def _main() -> None:

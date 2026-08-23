@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 
 import config
 import mcp_server
-import mcp_x_search
+import mcp_tools
 import oauth_flow
 import token_manager
 import xai_responses
@@ -81,10 +81,10 @@ def _metric_label(value: object) -> str:
 
 
 def _tracked_models() -> dict[str, str]:
-    from retrieve_schema import RAW_MODEL
+    from retrieve.schema import RAW_MODEL
 
     return {
-        "stable": mcp_x_search.DEFAULT_MODEL,
+        "stable": mcp_tools.DEFAULT_MODEL,
         "fast": config.GROK_PROXY_FAST_MODEL,
         "raw": RAW_MODEL,
     }
@@ -95,11 +95,11 @@ def _mcp_health_status() -> dict:
     models = _tracked_models()
     return {
         "tool_allowlist": list(config.GROK_GATEWAY_MCP_TOOL_ALLOWLIST),
-        "enabled_tools": [tool["name"] for tool in mcp_x_search.tool_definitions()],
+        "enabled_tools": [tool["name"] for tool in mcp_tools.tool_definitions()],
         "removed_tools": [
-            mcp_x_search.X_SEARCH_TOOL_NAME,
-            mcp_x_search.LATEST_POSTS_TOOL_NAME,
-            mcp_x_search.POSTS_TOOL_NAME,
+            mcp_tools.X_SEARCH_TOOL_NAME,
+            mcp_tools.LATEST_POSTS_TOOL_NAME,
+            mcp_tools.POSTS_TOOL_NAME,
         ],
         "models": {
             role: {"id": model_id, "listing": "unknown"}
@@ -621,7 +621,7 @@ async def metrics() -> Response:
     except Exception:
         pass
 
-    lines.extend(mcp_x_search.metrics_lines())
+    lines.extend(mcp_tools.metrics_lines())
 
     return Response(content="\n".join(lines) + "\n", media_type="text/plain")
 

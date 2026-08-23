@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, Literal, Mapping, Optional
 
 import config
-from retrieve_schema import X_POSTS_STAGE_SCHEMA
+from retrieve.schema import X_POSTS_STAGE_SCHEMA
 
 ObjectiveMode = Literal[
     "latest_by_handle",

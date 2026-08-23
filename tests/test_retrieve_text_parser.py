@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from retrieve_text_parser import extract_status_targets, parse_raw_posts_from_text, status_id_from_url
+from retrieve.text_parser import extract_status_targets, parse_raw_posts_from_text, status_id_from_url
 
 
 def test_extract_status_targets_ignores_short_numbers_and_caps_targets():

@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import mcp_x_search
 import xai_responses
-from retrieve_policy import RequestBudget
+from retrieve.policy import RequestBudget
 from x_oembed import OEmbedResult
 
 

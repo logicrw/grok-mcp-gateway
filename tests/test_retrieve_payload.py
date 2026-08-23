@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from retrieve_payload import merge_stage_payload
+from retrieve.payload import merge_stage_payload
 
 
 def test_merge_stage_payload_deduplicates_posts_by_status_id():

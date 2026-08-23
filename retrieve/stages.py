@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 import httpx
 
 import xai_responses
-from retrieve_metrics import record_error, record_stage, record_timeout, record_usage
-from retrieve_policy import RequestBudget, model_supports_reasoning_effort
+from retrieve.metrics import record_error, record_stage, record_timeout, record_usage
+from retrieve.policy import RequestBudget, model_supports_reasoning_effort
 
 SearchCaller = Callable[[Dict[str, Any]], Awaitable[xai_responses.ResponsesResult]]
 

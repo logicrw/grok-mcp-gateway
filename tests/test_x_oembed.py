@@ -6,7 +6,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from retrieve_oembed import merge_oembed_posts
+from retrieve.oembed import merge_oembed_posts
 from x_oembed import OEmbedPost, fetch_oembed_posts
 
 

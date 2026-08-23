@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from retrieve_text_parser import status_id_from_url
+from retrieve.text_parser import status_id_from_url
 from x_oembed import OEmbedPost
 
 

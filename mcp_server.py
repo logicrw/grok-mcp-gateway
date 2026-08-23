@@ -8,10 +8,10 @@ import sys
 from typing import Any, Dict, Optional
 
 from error_sanitizer import sanitize_text
-import mcp_x_search
+import mcp_tools
 
 SERVER_NAME = "grok-mcp-gateway"
-SERVER_VERSION = mcp_x_search.SERVER_VERSION
+SERVER_VERSION = mcp_tools.SERVER_VERSION
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
 
@@ -45,26 +45,26 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if method == "ping":
         return _result(request_id, {})
     if method == "tools/list":
-        return _result(request_id, {"tools": mcp_x_search.tool_definitions()})
+        return _result(request_id, {"tools": mcp_tools.tool_definitions()})
     if method == "tools/call":
         params = request.get("params") or {}
         if not isinstance(params, dict):
             return _error(request_id, -32602, "invalid params")
         tool_name = params.get("name")
-        if isinstance(tool_name, str) and mcp_x_search.tool_removed(tool_name):
+        if isinstance(tool_name, str) and mcp_tools.tool_removed(tool_name):
             return _error(request_id, -32602, f"tool removed in vNext: {tool_name}. Use x_retrieve.")
-        if not isinstance(tool_name, str) or tool_name not in mcp_x_search.TOOL_NAMES:
+        if not isinstance(tool_name, str) or tool_name not in mcp_tools.TOOL_NAMES:
             return _error(request_id, -32602, "unknown tool")
-        if not mcp_x_search.tool_enabled(tool_name):
+        if not mcp_tools.tool_enabled(tool_name):
             return _error(request_id, -32602, f"tool disabled by GROK_GATEWAY_MCP_TOOL_ALLOWLIST: {tool_name}")
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
             return _error(request_id, -32602, "arguments must be an object")
         try:
-            result = await mcp_x_search.call_tool(tool_name, arguments)
+            result = await mcp_tools.call_tool(tool_name, arguments)
             return _result(request_id, result)
         except Exception as exc:
-            return _result(request_id, mcp_x_search.tool_error_result(tool_name, arguments, sanitize_text(exc)))
+            return _result(request_id, mcp_tools.tool_error_result(tool_name, arguments, sanitize_text(exc)))
 
     return _error(request_id, -32601, f"method not found: {method}")
 

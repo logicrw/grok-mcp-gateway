@@ -54,7 +54,7 @@ def _read_smart_model(env_overrides: dict[str, str]) -> str:
         [
             sys.executable,
             "-c",
-            "from retrieve_policy import get_routing_config; print(get_routing_config().smart_model)",
+            "from retrieve.policy import get_routing_config; print(get_routing_config().smart_model)",
         ],
         cwd=REPO_ROOT,
         env=env,
