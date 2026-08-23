@@ -500,3 +500,36 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 3. 仍未改：错误载荷 stage 名 `stable_extract`；Fast 预算不足直接抛错 vs Smart 降级（P2-9）。改这些会动公开 JSON/错误形态。
 4. `mcp_x_search.py` 可以在下一个大版本删，但要先把测试 monkeypatch 迁到 `retrieve.x_search`。
 5. 验证口令：`ruff check . && basedpyright && pytest -q -W error`。
+
+---
+
+## 第七阶段记录（终局收官）
+
+- **日期**: 2026-08-23
+- **前提**: 网关仅个人及专属 Agent 团队自用，不再为未知第三方保留历史 JSON 别名。
+- **commit**: `53d4e6b`
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **193 passed**（第六阶段 189 + Fast 降级 1 + fixture 回放 3；错误 stage 断言改在原测试上）
+
+### 实际完成
+
+1. **干掉 `stable_extract` 假名字**
+   - `error_result`：参数解析失败 → `validation`；能解析则按 `resolve_plan` 回显 `fast_extract` / `smart_extract` / `custom_extract` / `target_fallback` / `smart_extract`（seed）。
+   - 超长 `model` 不再在 `tool_error_result` 里先截断再解析（否则会误判成 `custom_extract`）；stage 的 `model` 标签仍截到 128 字符。
+   - 一般流水线显式模型 lane 用 `custom_extract`，不再回落到 `stable_extract`。
+   - `_failed_stage_payload` 本来就吃调用方传入的 `stage_name`，未再硬编码。
+
+2. **P2-9 Fast 失败优雅降级**
+   - Fast 抛错时不再 `raise` 成 MCP `isError`。
+   - 预算够 → 仍升 Smart，再 raw；预算不够 → 跳过 Smart，仍走 `_maybe_run_raw_expansion`。
+   - 测试：抬高 Smart 升级门槛后，Fast 抛错 + raw 救回一条推文 → `isError=false`、`retrieval_status=degraded`。
+
+3. **方向 E fixture 回放**
+   - `tests/fixtures/xai/fast_latest.json`、`smart_verify.json`、`raw_non_json.json`：Responses 形状、无 Authorization/JWT/email。
+   - `tests/test_xai_fixtures.py`：生产提取器组 `ResponsesResult`，再打 `assemble_payload` / `finalize_payload` / `parse_raw_posts_from_text`。
+   - `docs/retrieval-architecture.md` 增加 Fixture refresh 表。不在 CI 打真实 API。
+
+### 仍可后续做、但不挡自用收官
+
+- `mcp_x_search.py` 兼容门面仍在，测试 monkeypatch 还走这个名字。
+- 指标测试仍可以主动 `record_stage(stage="stable_extract")`，那是标签字符串，不是流水线产出。
+- 没有真实 xAI 采样刷新 fixture；三份是按线上形状手写的脱敏样例。
