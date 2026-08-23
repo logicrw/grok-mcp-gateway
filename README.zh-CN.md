@@ -252,12 +252,17 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 | `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS` | `30.0` | 准入排队超时上限（超时转入过载保护，绝不触发层级升级雪崩）。 |
 | `GROK_PROXY_ALLOWED_ORIGINS` | `""` | 允许访问的浏览器 Origin 白名单（英文逗号分隔，供本地网页应用跨域调用；其余 Origin 在回环绑定下返回 403）。 |
 | `GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES` | `x_keyword_search` | 归属注入式 x_search 的 xAI 内部工具名列表，用于 auto-x_search 响应清洗时精确过滤内部产物。 |
+| `GROK_PROXY_RETRIEVE_CACHE` | `true` | 确定性检索（精确推文、按博主最新）命中本地 SQLite 缓存；语义研究永不缓存。 |
+| `GROK_PROXY_RETRIEVE_CACHE_PATH` | `<状态目录>/cache.sqlite` | 覆盖缓存文件路径。 |
+| `GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES` | `5000` | 缓存响应与抓取历史的 LRU 淘汰阈值。 |
+| `GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS` | `86400` | 精确推文目标（内容恒定）的缓存 TTL。 |
+| `GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS` | `480` | 按博主最新流的缓存 TTL。 |
 
 ---
 
 ## 安全与隐私保护
 
-- **零提示词与正文落盘**：网关绝不将用户的 prompt、推文正文或 OAuth Token 写入磁盘日志或 Prometheus 指标。
+- **零提示词与正文落盘**：网关绝不将用户的 prompt、推文正文或 OAuth Token 写入磁盘日志或 Prometheus 指标。可选响应缓存（`cache.sqlite`，同样的 `0700`/`0600` 保护，`GROK_PROXY_RETRIEVE_CACHE=false` 可整体关闭）是检索结果的唯一磁盘副本；其抓取历史只存 status ID 与内容哈希。
 - **严格文件权限与文件锁**：OAuth Token 状态存储（`~/.local/state/grok-oauth-proxy/`）强制执行 POSIX `0700` 目录与 `0600` 文件权限，配有跨进程 `flock` 锁与原子写盘。
 - **DNS 重绑定与 Origin 深度防御**：Loopback 监听严格执行 Host 白名单（`127.0.0.1`、`localhost`、`::1`）拦截，并拒绝对外未经授权的跨站浏览器 `Origin` 请求。
 - **完全解耦的状态管理**：网关独立维护自身的刷新凭据，绝不反向修改或污染外部客户端的私有配置文件。

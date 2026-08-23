@@ -165,4 +165,20 @@ GROK_PROXY_FAST_MAX_TURNS: int = _env_int("GROK_PROXY_FAST_MAX_TURNS", 2, minimu
 GROK_PROXY_SMART_MAX_TURNS: int = _env_int("GROK_PROXY_SMART_MAX_TURNS", 3, minimum=1, maximum=10)
 GROK_PROXY_STORE_RESPONSES: bool = _env_bool("GROK_PROXY_STORE_RESPONSES", False)
 
+# v0.3.0 response cache: identical deterministic queries (exact status targets,
+# latest-by-handle) are served from a local SQLite store instead of re-billing
+# upstream xAI calls. Semantic research stays uncached by design.
+GROK_PROXY_RETRIEVE_CACHE: bool = _env_bool("GROK_PROXY_RETRIEVE_CACHE", True)
+GROK_PROXY_RETRIEVE_CACHE_PATH: Optional[str] = (os.getenv("GROK_PROXY_RETRIEVE_CACHE_PATH") or "").strip() or None
+GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES: int = _env_int(
+    "GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES", 5000, minimum=10, maximum=100_000
+)
+# Immutable status posts keep a long TTL; live feeds rotate quickly.
+GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS: int = _env_int(
+    "GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS", 86_400, minimum=60, maximum=2_592_000
+)
+GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS: int = _env_int(
+    "GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS", 480, minimum=30, maximum=86_400
+)
+
 

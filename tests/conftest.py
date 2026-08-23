@@ -15,6 +15,18 @@ import token_manager
 
 
 @pytest.fixture(autouse=True)
+def _isolate_response_cache(monkeypatch, tmp_path):
+    """Point the response cache at a per-test scratch file.
+
+    Without this, cacheable retrievals in tests would write real payloads into
+    the user's live state directory and cross-contaminate later tests.
+    """
+    import config
+
+    monkeypatch.setattr(config, "GROK_PROXY_RETRIEVE_CACHE_PATH", str(tmp_path / "cache.sqlite"))
+
+
+@pytest.fixture(autouse=True)
 def _reset_token_manager_process_state():
     """Isolate module-level token state between tests.
 

@@ -33,6 +33,8 @@ RETRIEVE_ARGUMENT_KEYS = {
     "quality",
     "model_policy",
     "model",
+    "force_refresh",
+    "max_age_seconds",
 }
 INTENTS = {"auto", "research", "posts", "source_discovery", "reaction_tracking", "verify_claim"}
 MODES = {
@@ -165,6 +167,16 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
                     "minLength": 1,
                     "maxLength": RETRIEVE_MODEL_MAX_CHARS,
                     "description": f"Optional stable xAI model. Defaults to {default_model}.",
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "Bypass the local response cache and force a fresh upstream retrieval.",
+                },
+                "max_age_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2592000,
+                    "description": "Maximum acceptable cached age for this call; overrides the per-mode cache TTL.",
                 },
             },
             "additionalProperties": False,

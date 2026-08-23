@@ -252,12 +252,17 @@ All gateway settings can be customized via environment variables or `.env`:
 | `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS` | `30.0` | Admission queue timeout before marking the request as overloaded (never triggers tier escalation). |
 | `GROK_PROXY_ALLOWED_ORIGINS` | `""` | Comma-separated browser Origin whitelist (for local web apps). Other browser origins are rejected with 403 on loopback binds. |
 | `GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES` | `x_keyword_search` | Internal xAI tool names attributed to the injected x_search tool when stripping artifacts from auto-x_search responses. |
+| `GROK_PROXY_RETRIEVE_CACHE` | `true` | Serve repeated deterministic retrievals (exact targets, latest-by-handle) from a local SQLite cache; semantic research is never cached. |
+| `GROK_PROXY_RETRIEVE_CACHE_PATH` | `<state dir>/cache.sqlite` | Override the cache file location. |
+| `GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES` | `5000` | LRU eviction threshold for cached responses and fetch history. |
+| `GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS` | `86400` | Cache TTL for immutable exact status targets. |
+| `GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS` | `480` | Cache TTL for latest-by-handle feeds. |
 
 ---
 
 ## Security & Privacy
 
-- **Zero Content Logging**: The gateway never writes prompts, post bodies, user queries, or auth tokens to disk logs or Prometheus metrics.
+- **Zero Content Logging**: The gateway never writes prompts, post bodies, user queries, or auth tokens to disk logs or Prometheus metrics. The opt-out response cache (`cache.sqlite`, same `0700`/`0600` protections, `GROK_PROXY_RETRIEVE_CACHE=false` to disable) is the only on-disk copy of retrieval results; its fetch history stores status IDs and content hashes only.
 - **Strict File Permissions & File Locking**: OAuth token storage (`~/.local/state/grok-oauth-proxy/`) enforces POSIX `0700` directory and `0600` file permissions with inter-process `flock` and atomic writes.
 - **DNS Rebinding & Origin Protection**: Loopback binding strictly enforces Host whitelisting (`127.0.0.1`, `localhost`, `::1`) and rejects unauthorized browser `Origin` requests.
 - **Isolated Token State**: The gateway maintains its own refreshed credentials and never mutates client configuration files.

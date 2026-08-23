@@ -30,6 +30,8 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
     include_replies = _clean_bool(arguments, "include_replies", True)
     include_reposts = _clean_bool(arguments, "include_reposts", True)
     explicit_model = _clean_model(arguments)
+    force_refresh = _clean_bool(arguments, "force_refresh", False)
+    max_age_seconds = _clean_max_age_seconds(arguments)
 
     posts_arguments: Dict[str, Any] = {
         "count": count,
@@ -68,9 +70,20 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
             "lookback_days": lookback_days,
             "target_status_ids": target_status_ids,
             "routing_warnings": routing_warnings,
+            "force_refresh": force_refresh,
+            "max_age_seconds": max_age_seconds,
         }
     )
     return search_arguments, metadata
+
+
+def _clean_max_age_seconds(arguments: Dict[str, Any]) -> Optional[int]:
+    value = arguments.get("max_age_seconds")
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("max_age_seconds must be a non-negative integer")
+    return min(value, 2_592_000)
 
 
 def _copy_optional(source: Dict[str, Any], target: Dict[str, Any], key: str) -> None:

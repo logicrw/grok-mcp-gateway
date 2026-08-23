@@ -33,7 +33,14 @@ def assemble_payload(result: xai_responses.ResponsesResult, metadata: Dict[str, 
         "source_limit": SOURCE_LIMIT,
         "mode": metadata["mode"],
         "request": _request_metadata(metadata),
-        "retrieval_stages": [{"name": stage_name, "model": result.model, "status": "success"}],
+        "retrieval_stages": [
+            {
+                "name": stage_name,
+                "model": result.model,
+                "status": "success",
+                "usage_cost_ticks": xai_responses.parse_usage_cost_ticks(result.usage),
+            }
+        ],
         "models_used": [result.model],
         "warnings": list(metadata.get("routing_warnings") or []) + list(posts_payload["warnings"]),
         "filter_reliability": posts_payload["filter_reliability"],

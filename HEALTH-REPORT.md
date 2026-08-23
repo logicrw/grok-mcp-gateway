@@ -634,3 +634,40 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 
 - `_x_search_*` 指标前缀与 `_x_search_semaphore` 内部名仍是历史命名（公开 env 已统一，仅内部标识符）。
 - 审计矩阵 #16 的完整 SSE parser fuzz（当前覆盖 LF/CRLF/CR/分块/溢出主路径）。
+
+## 第十阶段记录（v0.3.0：响应缓存与请求合并）
+
+- **日期**: 2026-08-23
+- **输入**: Firecrawl 缓存机制对比分析后维护者确认的方案（三处修正后实施：隐私显式化、命中率按确定性分层、L1 合并先行；明确不做 stale-while-revalidate 默认开、语义相似度缓存、Redis）。
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **256 passed**（第九阶段 244 + `tests/test_retrieve_cache.py` 12 新增）。
+- **版本**: 0.2.0 → 0.3.0（SERVER_VERSION / pyproject / user-agent）。
+
+### 设计与实现
+
+1. **缓存分层**（`retrieve/cache.py`）：
+   - **L1 进程内合并**：`coalesce()` 以共享 task 实现同键并发单飞（shield 模式，调用方取消不影响共享执行与落盘），与 token 刷新同款语义；
+   - **L2 SQLite WAL**：`~/.local/state/grok-oauth-proxy/cache.sqlite`（可用 `GROK_PROXY_RETRIEVE_CACHE_PATH` 覆盖），per-call 连接 + busy_timeout，跨进程安全（HTTP 网关 + 多 stdio 会话共享）；
+   - **只缓存确定性键**：`exact_only`（TTL 86400s，推文恒定）与 `latest_by_handle`（TTL 480s）；semantic/claim/seed 类生成式检索**永不持久化**。键基于规范化 metadata（handle 排序小写、query 折叠空白小写、质量/过滤参数 canonica JSON）。
+2. **穿透参数**：`force_refresh`（跳过读缓存，仍合并+回写）与 `max_age_seconds`（当次覆盖 TTL，0 即强制过期），进入 `RETRIEVE_ARGUMENT_KEYS` 与 inputSchema。
+3. **只缓存 `retrieval_status == "ok"`** 的完整 structuredContent（含 cache 块与 new 标注）；degraded/no_match/error 永不落盘。命中响应带 `cache: {hit, age_seconds, policy, saved_cost_in_usd_ticks}`。
+4. **快照 diff（ID-only）**：`fetch_history` 只存 (handle, status_id, content_hash, first_seen, last_seen)——**零正文**；`new_since_last_fetch` 标注在 item 上，跨查询持续追踪博主更新；responses 与 history 各自 LRU（同 `GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES` 阈值）。
+5. **成本透明**：`assemble_payload` 在 stage 上记录 `usage_cost_ticks`，payload 顶层汇总 `usage_cost_ticks`；缓存命中显示 `saved_cost_in_usd_ticks`。
+6. **可观测**：`mcp_x_retrieve_cache_total{result=hit|miss|bypass|write|error}`。
+7. **隐私与权限**：缓存文件与其 `-wal`/`-shm` 全部 0600（WAL 边车不跟随 umask 的缺陷在实施中发现并修复）；README 双语「零内容落盘」条款改写为「日志零落盘 + 功能性缓存可关且同级隔离」；总开关 `GROK_PROXY_RETRIEVE_CACHE=false` 时连 ID-only 历史也完全不落盘。
+8. **测试隔离**：conftest autouse 将缓存路径指向 per-test tmp 文件——实施中发现无隔离时测试会污染真实 `~/.local/state` 缓存（已删除污染文件并加固）。
+
+### 新增测试（12 例）
+
+策略分层与键规范化；exact 二次调用零上游命中缓存（含 saved ticks）；force_refresh 回写；max_age=0 强制过期；禁用时不落盘；degraded 不缓存；并发同键单飞（阻塞线程证明 join 而非重复执行）；LRU 上限；new_since_last_fetch 只标未见帖且历史零正文；0600/0700 权限；成本票汇总与免费 stage 不标。
+
+### 明确不做（延续评审结论）
+
+- stale-while-revalidate 默认开（对"要最新"场景有害）；
+- 语义相似度缓存（生成式检索键空间近乎无限，脆弱）；
+- Redis / 外部缓存服务（本地自用无理由）。
+
+### 残留（低优先级）
+
+- 跨进程并发相同请求的合并（L1 仅进程内；跨进程重复由 L2 命中兜底）；
+- 缓存命中_age_ 直方图（当前仅计数器）；
+- `new_since_last_fetch` 对 exact_only 模式意义有限，仅对 handle 流真正有用（已按此实现，未做模式限定以保持简单）。

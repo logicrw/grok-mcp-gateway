@@ -2,6 +2,37 @@
 
 All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
+## 0.3.0 - 2026-08-23
+
+### Added
+
+- Add a response cache for deterministic `x_retrieve` queries: exact status
+  targets (24h TTL) and latest-by-handle feeds (8min TTL) are served from a
+  local SQLite store (`cache.sqlite`, WAL mode, shared across gateway
+  processes) with per-request `force_refresh` and `max_age_seconds` overrides.
+  Semantic research is never cached; degraded and error payloads are never
+  stored. Hits report `cache: {hit, age_seconds, policy, saved_cost_in_usd_ticks}`.
+- Coalesce concurrent identical requests in-process: one upstream run shared by
+  all waiters (shielded, so caller cancellation never discards the result or
+  its cache write).
+- Track fetch history with status IDs and content hashes only (no post text)
+  and mark `new_since_last_fetch` on items unseen for their author, enabling
+  cheap handle monitoring across queries.
+- Report `usage_cost_ticks` per stage and per response, so agents and cache
+  hits can see what a retrieval cost or saved.
+- Add cache metrics `mcp_x_retrieve_cache_total{result=hit|miss|bypass|write|error}`.
+- New settings: `GROK_PROXY_RETRIEVE_CACHE`, `GROK_PROXY_RETRIEVE_CACHE_PATH`,
+  `GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES`,
+  `GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS`,
+  `GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS`.
+
+### Changed
+
+- Enforce `0600` on the cache file and its WAL side files; the zero-content-
+  logging privacy promise now documents the opt-out cache store explicitly
+  (`GROK_PROXY_RETRIEVE_CACHE=false` disables all disk persistence, including
+  ID-only fetch history).
+
 ## Unreleased
 
 ### Security

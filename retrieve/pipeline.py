@@ -6,8 +6,10 @@ import time
 from collections import defaultdict
 from typing import Any, Dict
 
+import config
 import xai_responses
 from error_sanitizer import sanitize_text
+from retrieve import cache
 from retrieve.metrics import (
     metrics_lines as orchestration_metrics_lines,
     record_error,
@@ -71,24 +73,63 @@ def metrics_lines() -> list[str]:
     for (reason, status), count in sorted(_raw_expansion_counts.items()):
         lines.append(f'mcp_x_retrieve_raw_expansion_total{{reason="{reason}",status="{status}"}} {count}')
     lines.extend(orchestration_metrics_lines())
+    lines.extend(cache.metrics_lines())
     return lines
 
 
 async def call_retrieve(arguments: Dict[str, Any], *, search: SearchCaller) -> Dict[str, Any]:
     search_arguments, metadata = build_retrieve_search_arguments(arguments)
-    budget = RequestBudget()
-    plan = resolve_plan(metadata, explicit_model=metadata.get("explicit_model"))
-    record_route(lane=plan.initial_lane, objective_mode=plan.objective_mode, escalated=False)
+    directive = cache.cache_directive(metadata) if config.GROK_PROXY_RETRIEVE_CACHE else None
 
-    if plan.target_strategy != "none":
-        payload = await _run_target_pipeline(search_arguments, metadata, plan, search, budget)
+    if directive is not None and not metadata.get("force_refresh"):
+        cached = await cache.get(directive.key, directive.ttl_seconds, metadata.get("max_age_seconds"))
+        if cached is not None:
+            payload, age, policy = cached
+            payload["cache"] = {
+                "hit": True,
+                "age_seconds": round(age, 1),
+                "policy": policy,
+                "saved_cost_in_usd_ticks": payload.get("usage_cost_ticks", 0),
+            }
+            cache.record_cache_result("hit")
+            record_retrieval_status(str(payload["retrieval_status"]))
+            body = json.dumps(payload, ensure_ascii=False, indent=2)
+            return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": False}
+        cache.record_cache_result("miss")
+    elif directive is not None:
+        cache.record_cache_result("bypass")
+
+    async def _run_pipeline() -> Dict[str, Any]:
+        budget = RequestBudget()
+        plan = resolve_plan(metadata, explicit_model=metadata.get("explicit_model"))
+        record_route(lane=plan.initial_lane, objective_mode=plan.objective_mode, escalated=False)
+
+        if plan.target_strategy != "none":
+            payload = await _run_target_pipeline(search_arguments, metadata, plan, search, budget)
+        else:
+            payload = await _run_general_pipeline(search_arguments, metadata, plan, search, budget)
+
+        if plan.route_warning:
+            payload["warnings"].append(plan.route_warning)
+        add_target_citation_items(payload, metadata)
+        finalize_payload(payload, metadata)
+        payload["usage_cost_ticks"] = sum(
+            int(stage.get("usage_cost_ticks") or 0) for stage in payload.get("retrieval_stages", [])
+        )
+        # Persist inside the shared task so caller cancellation cannot discard
+        # an upstream result that coalesced waiters still expect to be cached.
+        if directive is not None:
+            payload["cache"] = {"hit": False, "policy": directive.policy}
+        if directive is not None and payload.get("retrieval_status") == "ok":
+            cache.mark_new_items_and_record_history(payload)
+            await cache.put(directive.key, directive.policy, payload)
+        return payload
+
+    if directive is not None:
+        payload = await cache.coalesce(directive.key, _run_pipeline)
     else:
-        payload = await _run_general_pipeline(search_arguments, metadata, plan, search, budget)
+        payload = await _run_pipeline()
 
-    if plan.route_warning:
-        payload["warnings"].append(plan.route_warning)
-    add_target_citation_items(payload, metadata)
-    finalize_payload(payload, metadata)
     record_retrieval_status(str(payload["retrieval_status"]))
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": False}
