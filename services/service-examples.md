@@ -16,7 +16,7 @@ For headless install plus service enablement in one step:
 
 The installer renders `services/grok-mcp-gateway.service` with your current username, home directory, Hermes auth path, repository path, and virtualenv path before copying it to `/etc/systemd/system/grok-mcp-gateway.service`.
 
-Manual installation is still possible, but edit the template first and replace all `__SERVICE_*__` placeholders with real values for your server. Make sure `Environment=HOME=...`, `Environment=HERMES_AUTH_PATH=...`, and `Environment=PATH=...` are present; systemd services do not always inherit your interactive shell environment, and Hermes CLI is commonly installed under `~/.local/bin`.
+Manual installation is still possible, but edit the template first and replace all `__SERVICE_*__` placeholders with real values for your server. Make sure `Environment=HOME=...` and `Environment=PATH=...` are present; systemd services do not always inherit your interactive shell environment. `HERMES_AUTH_PATH` is only used by the explicit `scripts/import_xai_oauth.py` / `scripts/export_xai_oauth.py` migration helpers — the running gateway reads `GROK_PROXY_AUTH_STATE` (default `~/.local/state/grok-oauth-proxy/auth_state.json`) and does not poll Hermes.
 
 ## macOS (LaunchAgent)
 

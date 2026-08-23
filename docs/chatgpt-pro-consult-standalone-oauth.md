@@ -4,7 +4,7 @@
 
 当前项目 `grok-mcp-gateway` 是一个为本地多个 AI Agent 客户端（Claude Code、Codex、Hermes、Zed、Alma 等）提供推文检索（`x_retrieve`）与 Grok 调用的本地常驻 MCP 服务的 Python 仓库。
 
-当前仓库在启动时，如果本地 `~/.local/state/grok-oauth-proxy/auth_state.json` 为空，会从 `~/.hermes/auth.json` 中读取 OAuth Token 作为初始引导凭据（Bootstrap Seed）。
+当前仓库在启动时如果本地 `~/.local/state/grok-oauth-proxy/auth_state.json` 为空，**不会**再从 `~/.hermes/auth.json` 隐式 bootstrap。运行时入口是 `python main.py --login`（或 `python scripts/login_xai_oauth.py`）。从 Hermes 导入只走显式脚本 `scripts/import_xai_oauth.py`。
 
 **现在的目标是：彻底斩断对外部应用（如 Hermes）的初次引导依赖，让网关自身具备 100% 独立的原生 PKCE OAuth 浏览器登录与认证能力。**
 

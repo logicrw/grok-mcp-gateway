@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import config
 import oauth_flow
 import token_manager
 
@@ -274,3 +275,7 @@ def test_read_local_state_never_implicitly_bootstraps_from_hermes(tmp_path, monk
 
     with pytest.raises(token_manager.AuthRequiredError, match="--login"):
         asyncio.run(token_manager.read_local_state())
+
+
+def test_runtime_config_does_not_expose_hermes_poll_interval():
+    assert not hasattr(config, "HERMES_POLL_INTERVAL")

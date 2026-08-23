@@ -319,7 +319,11 @@ async def load_from_hermes(auth_path: Optional[Path] = None) -> Optional[Dict[st
 
 
 async def init_local_state() -> Dict[str, Any]:
-    """Bootstrap local auth_state.json from Hermes (if present)."""
+    """Explicit one-shot import from Hermes auth.json into LOCAL_AUTH_PATH.
+
+    Startup, refresh, and token watching use read_local_state() instead and
+    never call this function.
+    """
     if not HERMES_AUTH_PATH.exists():
         if not shutil.which("hermes"):
             raise RuntimeError(

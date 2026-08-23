@@ -1,5 +1,14 @@
 # RFC & 架构深度评审方案：Grok 4.6 升级、两层自适应检索路由与本地多 Agent 并发加固
 
+> **Status (2026-08-23):** Historical design packet. Do not implement from this
+> file. Runtime authentication is native PKCE (`oauth_flow.py`,
+> `python main.py --login`); `read_local_state()` does not bootstrap from
+> Hermes. Smart Lane sends `reasoning.effort` of `low` / `medium` / `high`
+> only — `xhigh` was proposed here and is not sent. Current behavior:
+> `docs/retrieval-architecture.md` and `HEALTH-REPORT.md`.
+> Explicit Hermes migration remains `scripts/import_xai_oauth.py` /
+> `token_manager.load_from_hermes`.
+
 - **文档版本**: v2.0.0 (Comprehensive Edition)
 - **目标项目**: `logicrw/grok-mcp-gateway`
 - **目标受众**: ChatGPT Pro 架构审查 / 核心维护者

@@ -79,8 +79,6 @@ PROXY_API_KEY: Optional[str] = (os.getenv("PROXY_API_KEY") or "").strip() or Non
 
 # Seconds before token expiry to trigger a background prewarm refresh
 TOKEN_REFRESH_WINDOW: int = _env_int("TOKEN_REFRESH_WINDOW", 300, minimum=30)
-# How often to poll Hermes auth.json for changes (seconds)
-HERMES_POLL_INTERVAL: int = _env_int("HERMES_POLL_INTERVAL", 60, minimum=5)
 
 # Total upstream attempts, including the first try. Clamp to one so retry config
 # mistakes do not make every request fail without contacting upstream.
