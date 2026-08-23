@@ -184,6 +184,7 @@ def test_model_override_has_a_hard_length_limit():
     assert response["result"]["isError"] is True
     assert "model must be at most 128 characters" in response["result"]["structuredContent"]["warnings"][0]
     assert response["result"]["structuredContent"]["mode"] == "semantic_research"
+    assert response["result"]["structuredContent"]["retrieval_stages"][0]["name"] == "validation"
 
 
 def test_error_result_uses_parsed_latest_by_handle_mode():
@@ -199,6 +200,37 @@ def test_error_result_uses_parsed_latest_by_handle_mode():
     assert payload["request"]["handles"] == ["xai"]
     assert payload["request"]["count"] == 5
     assert payload["retrieval_status"] == "error"
+    assert payload["retrieval_stages"][0]["name"] == "fast_extract"
+
+
+def test_fast_lane_failure_without_smart_budget_degrades_via_raw(monkeypatch):
+    import config
+    from retrieve.schema import RAW_MODEL
+
+    monkeypatch.setattr(config, "GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS", 10_000.0)
+
+    async def fake_search(arguments):
+        if arguments.get("model") == config.GROK_PROXY_FAST_MODEL:
+            raise RuntimeError("fast lane unavailable")
+        return xai_responses.ResponsesResult(
+            '{"posts":[{"text":"rescued from raw","url":"https://x.com/xai/status/2071385784154759468"}]}',
+            {},
+            [{"url": "https://x.com/xai/status/2071385784154759468"}],
+            None,
+            arguments["model"],
+        )
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
+
+    response = _call({"handles": ["xai"], "sort": "latest", "count": 5})
+    structured = response["result"]["structuredContent"]
+
+    assert response["result"]["isError"] is False
+    assert structured["retrieval_status"] == "degraded"
+    assert any("fast_extract failed" in warning for warning in structured["warnings"])
+    assert any(stage["name"] == "fast_extract" and stage["status"] == "failed" for stage in structured["retrieval_stages"])
+    assert any(stage["name"] == "raw_expansion" and stage.get("model") == RAW_MODEL for stage in structured["retrieval_stages"])
+    assert structured["items"][0]["text"] == "rescued from raw"
 
 
 def test_exhausted_oembed_budget_is_visible_as_warning():

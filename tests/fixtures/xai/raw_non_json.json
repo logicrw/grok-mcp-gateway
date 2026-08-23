@@ -1,0 +1,22 @@
+{
+  "id": "resp_fixture_raw_non_json",
+  "model": "grok-composer-2.5-fast",
+  "status": "completed",
+  "output_text": "Search narration omitted.\nurl: https://x.com/logicrw/status/2071385784154759468\ncontent: Fixture candidate about gateway retrieval contracts.\nurl: https://x.com/xai/status/2071323738201837785\ntext: Second raw candidate with a canonical status URL.\n",
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Search narration omitted.\nurl: https://x.com/logicrw/status/2071385784154759468\ncontent: Fixture candidate about gateway retrieval contracts.\nurl: https://x.com/xai/status/2071323738201837785\ntext: Second raw candidate with a canonical status URL.\n"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "reasoning_tokens": 0,
+    "x_search_calls": 1,
+    "cost_in_usd_ticks": 2
+  }
+}

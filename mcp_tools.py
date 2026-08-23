@@ -9,7 +9,7 @@ import config
 import mcp_posts
 from retrieve import pipeline
 from retrieve import x_search
-from retrieve.schema import RETRIEVE_MODEL_MAX_CHARS, retrieve_tool_definition
+from retrieve.schema import retrieve_tool_definition
 
 X_SEARCH_TOOL_NAME = "x_search"
 POSTS_TOOL_NAME = mcp_posts.POSTS_TOOL_NAME
@@ -38,10 +38,7 @@ def tool_error_result(tool_name: str, arguments: Dict[str, Any], error_text: str
     if tool_name == RETRIEVE_TOOL_NAME:
         retrieve_arguments = dict(arguments)
         requested_model = retrieve_arguments.get("model")
-        model = requested_model.strip() if isinstance(requested_model, str) else ""
-        if model:
-            retrieve_arguments["model"] = model[:RETRIEVE_MODEL_MAX_CHARS]
-        else:
+        if not isinstance(requested_model, str) or not requested_model.strip():
             retrieve_arguments.pop("model", None)
         return pipeline.error_result(retrieve_arguments, error_text)
     return {"content": [{"type": "text", "text": f"{tool_name} failed: {error_text}"}], "isError": True}

@@ -4,6 +4,20 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ## Unreleased
 
+### Added
+
+- Add sanitized xAI Responses fixtures under `tests/fixtures/xai/` and replay
+  tests for Fast JSON, Smart citations, and non-JSON raw candidate text.
+
+### Changed
+
+- Name failed retrieve stages from the actual lane (`fast_extract`,
+  `smart_extract`, `custom_extract`, `validation`) instead of the leftover
+  `stable_extract` label.
+- When Fast Lane fails and remaining budget is below the Smart escalation
+  floor, return a `degraded` payload and still attempt raw expansion instead
+  of raising a hard MCP error.
+
 ## 0.2.0 - 2026-08-23
 
 ### Added

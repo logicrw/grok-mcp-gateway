@@ -76,6 +76,21 @@ The v2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | true | Enable Fast -> Smart adaptive routing |
 | `GROK_PROXY_STORE_RESPONSES` | false | Explicit `store: false` for independent retrieval requests |
 
+## Fixture refresh
+
+Offline contract tests live in `tests/fixtures/xai/`. They are sanitized
+Responses-shaped JSON (no Authorization, JWT, email, or live tokens). Refresh
+them only from a real `x_retrieve` by saving `response.json()` after
+`error_sanitizer.sanitize_text`, then stripping remaining identifiers.
+
+| File | Lane | What the replay asserts |
+| --- | --- | --- |
+| `fast_latest.json` | Fast | `assemble_payload` + `finalize_payload` → `ok` |
+| `smart_verify.json` | Smart | citations survive extraction; claim URL is kept |
+| `raw_non_json.json` | Raw | `parse_raw_posts_from_text` recovers status URLs |
+
+Do not hit the live xAI API from CI.
+
 ## Telemetry & Metrics
 
 `/metrics` provides low-cardinality Prometheus telemetry:

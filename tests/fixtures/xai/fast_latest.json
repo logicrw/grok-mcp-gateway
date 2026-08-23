@@ -1,0 +1,29 @@
+{
+  "id": "resp_fixture_fast_latest",
+  "model": "grok-4.20-0309-non-reasoning",
+  "status": "completed",
+  "output_text": "{\"warnings\":[],\"posts\":[{\"created_at\":\"2026-08-20T12:00:00Z\",\"author\":\"xai\",\"text\":\"Grok 4.6 is now the default Smart Lane model.\",\"url\":\"https://x.com/xai/status/2071385784154759468\",\"metrics\":{\"views\":1200,\"likes\":40,\"reposts\":8,\"replies\":3},\"truncated\":false}]}",
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"warnings\":[],\"posts\":[{\"created_at\":\"2026-08-20T12:00:00Z\",\"author\":\"xai\",\"text\":\"Grok 4.6 is now the default Smart Lane model.\",\"url\":\"https://x.com/xai/status/2071385784154759468\",\"metrics\":{\"views\":1200,\"likes\":40,\"reposts\":8,\"replies\":3},\"truncated\":false}]}"
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "type": "url_citation",
+      "url": "https://x.com/xai/status/2071385784154759468",
+      "title": "xAI"
+    }
+  ],
+  "usage": {
+    "output_tokens_details": {"reasoning_tokens": 0},
+    "server_side_tool_usage_details": {"x_search_calls": 1},
+    "cost_in_usd_ticks": 4
+  }
+}

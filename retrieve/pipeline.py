@@ -39,7 +39,14 @@ from retrieve.policy import (
     should_escalate_to_smart,
 )
 from retrieve.routing import build_retrieve_search_arguments
-from retrieve.schema import BACKEND, RAW_MODEL, RETRIEVE_TOOL_NAME, SCHEMA_VERSION, SOURCE_LIMIT
+from retrieve.schema import (
+    BACKEND,
+    RAW_MODEL,
+    RETRIEVE_MODEL_MAX_CHARS,
+    RETRIEVE_TOOL_NAME,
+    SCHEMA_VERSION,
+    SOURCE_LIMIT,
+)
 from retrieve.stages import SearchCaller, run_search_stage
 from x_oembed import OEMBED_TIMEOUT_SECONDS, fetch_oembed_posts
 
@@ -221,11 +228,7 @@ async def _run_general_pipeline(
     search: SearchCaller,
     budget: RequestBudget,
 ) -> Dict[str, Any]:
-    stage_name = (
-        "fast_extract"
-        if plan.initial_lane == "fast"
-        else ("smart_extract" if plan.initial_lane == "smart" else "stable_extract")
-    )
+    stage_name = _general_stage_name(plan)
     stage_arguments = dict(search_arguments)
     stage_arguments["model"] = plan.model
     stage_arguments["_max_turns"] = plan.max_turns
@@ -243,14 +246,20 @@ async def _run_general_pipeline(
             stage_seconds=plan.stage_timeout_seconds,
         )
     except Exception as exc:
-        if plan.initial_lane == "fast" and budget.remaining() >= get_routing_config().smart_escalation_min_remaining_seconds:
-            # Fast lane failed or timed out; escalate directly to Smart Lane
+        if plan.initial_lane != "fast":
+            raise
+        payload = _failed_stage_payload(
+            metadata,
+            stage_name=stage_name,
+            model=str(plan.model),
+            error_text=sanitize_text(exc),
+        )
+        _record_quality(payload, metadata)
+        if budget.remaining() >= get_routing_config().smart_escalation_min_remaining_seconds:
             record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
-            payload = _failed_stage_payload(metadata, stage_name=stage_name, model=str(plan.model), error_text=sanitize_text(exc))
             await _run_smart_escalation(payload, search_arguments, metadata, plan, search, budget)
-            await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
-            return payload
-        raise
+        await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
+        return payload
 
     payload = assemble_payload(result, metadata, stage_name=stage_name)
     quality = _record_quality(payload, metadata)
@@ -385,6 +394,14 @@ async def _run_public_oembed(payload: Dict[str, Any], metadata: Dict[str, Any], 
     _append_oembed_stage(payload, status_ids, status, len(result.posts))
 
 
+def _general_stage_name(plan: RetrievalPlan) -> str:
+    if plan.initial_lane == "fast":
+        return "fast_extract"
+    if plan.initial_lane == "smart":
+        return "smart_extract"
+    return "custom_extract"
+
+
 def _record_quality(payload: Dict[str, Any], metadata: Dict[str, Any]):
     quality = evaluate_quality(payload, metadata)
     _quality_gate_counts["pass" if quality.passed else "fail"] += 1
@@ -435,7 +452,7 @@ def _failed_stage_payload(metadata: Dict[str, Any], *, stage_name: str, model: s
 
 
 def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
-    metadata = _error_metadata(arguments)
+    metadata, parse_failed = _error_metadata(arguments)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "tool": RETRIEVE_TOOL_NAME,
@@ -444,7 +461,13 @@ def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
         "source_limit": SOURCE_LIMIT,
         "mode": metadata["mode"],
         "request": _request_metadata(metadata),
-        "retrieval_stages": [{"name": "stable_extract", "model": arguments.get("model") or "unknown", "status": "failed"}],
+        "retrieval_stages": [
+            {
+                "name": _error_stage_name(metadata, parse_failed=parse_failed),
+                "model": _error_model_label(arguments.get("model")),
+                "status": "failed",
+            }
+        ],
         "retrieval_status": "error",
         "models_used": [],
         "warnings": [f"x_retrieve failed: {error_text}"],
@@ -460,10 +483,33 @@ def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
     return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": True}
 
 
-def _error_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
+def _error_model_label(model: Any) -> str:
+    if not isinstance(model, str) or not model.strip():
+        return "unknown"
+    cleaned = model.strip()
+    if len(cleaned) > RETRIEVE_MODEL_MAX_CHARS:
+        return cleaned[:RETRIEVE_MODEL_MAX_CHARS]
+    return cleaned
+
+
+def _error_stage_name(metadata: Dict[str, Any], *, parse_failed: bool) -> str:
+    if parse_failed:
+        return "validation"
+    try:
+        plan = resolve_plan(metadata, explicit_model=metadata.get("explicit_model"))
+    except Exception:
+        return "error"
+    if plan.target_strategy == "exact_only":
+        return "target_fallback"
+    if plan.target_strategy == "seed_then_research":
+        return "smart_extract"
+    return _general_stage_name(plan)
+
+
+def _error_metadata(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     try:
         _, metadata = build_retrieve_search_arguments(dict(arguments))
-        return metadata
+        return metadata, False
     except Exception:
         query = arguments.get("query") if isinstance(arguments.get("query"), str) else None
         raw_handles = arguments.get("handles")
@@ -480,4 +526,4 @@ def _error_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "query": query,
             "excluded_handles": [],
             "target_status_ids": [],
-        }
+        }, True

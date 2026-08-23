@@ -1,0 +1,36 @@
+{
+  "id": "resp_fixture_smart_verify",
+  "model": "grok-4.6",
+  "status": "completed",
+  "output_text": "{\"warnings\":[],\"posts\":[{\"created_at\":\"2026-08-12T16:30:00Z\",\"author\":\"xai\",\"text\":\"Claim check: Grok 4.6 shipped on the documented date.\",\"url\":\"https://x.com/xai/status/2071323738201837785\",\"metrics\":{\"views\":8800,\"likes\":210,\"reposts\":44,\"replies\":19},\"truncated\":false}]}",
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"warnings\":[],\"posts\":[{\"created_at\":\"2026-08-12T16:30:00Z\",\"author\":\"xai\",\"text\":\"Claim check: Grok 4.6 shipped on the documented date.\",\"url\":\"https://x.com/xai/status/2071323738201837785\",\"metrics\":{\"views\":8800,\"likes\":210,\"reposts\":44,\"replies\":19},\"truncated\":false}]}"
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "type": "url_citation",
+      "url": "https://x.com/xai/status/2071323738201837785",
+      "title": "Original claim post"
+    }
+  ],
+  "annotations": [
+    {
+      "type": "url_citation",
+      "url": "https://x.com/xai/status/2071323738201837785",
+      "title": "Original claim post"
+    }
+  ],
+  "usage": {
+    "output_tokens_details": {"reasoning_tokens": 180},
+    "server_side_tool_usage_details": {"x_search_calls": 2},
+    "cost_in_usd_ticks": 36
+  }
+}
