@@ -449,3 +449,54 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 3. 方向 D（`retrieve/` 收包）和方向 E（脱敏 xAI fixture）仍未做。E 仍然更值钱，但需要一次真实采样。
 4. 仍未修：错误载荷 stage 名 `stable_extract`；Fast 预算不足直接抛错 vs Smart 降级；target pipeline 不计 quality-gate 指标。
 5. 验证口令不变：`ruff check . && basedpyright && pytest -q -W error`。
+
+---
+
+## 第五阶段记录
+
+- **日期**: 2026-08-23
+- **选题**: 方向 D — `retrieve/` 包收拢 + MCP 门面拆解
+- **commit**: `a9792f4`
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **191 passed**（断言期望值未改）
+
+### 为什么选它
+
+第一阶段路线图把 D 放在 A 之后。payload 构造器已收口，再搬家不会一边改 JSON 一边改路径。根目录 `retrieve_*.py` + `mcp_x_search.py` 身兼注册/信号量/payload，后续改并发只能碰整文件。
+
+### 实际完成
+
+- 新建 `retrieve/`：`policy.py`、`routing.py`、`stages.py`、`payload.py`、`oembed.py`、`text_parser.py`、`schema.py`、`metrics.py`、`pipeline.py`（原 `mcp_retrieve.py`）。
+- `mcp_tools.py`：`tool_definitions` / `call_tool` / allowlist / removed tools。`main.py` 与 `mcp_server.py` 改从这里进。
+- `retrieve/x_search.py`：`_x_search_payload`、信号量、`GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` 指标。
+- `mcp_x_search.py` 保留为兼容门面（stdio 入口、测试 monkeypatch `mcp_x_search._call_x_search_result` 与 `mcp_x_search.mcp_retrieve`）。`mcp_tools._search_caller()` 优先用该模块上的 `_call_x_search_result`，所以旧测试不用改断言。
+- BasedPyright `include` 加上 `retrieve/`；tests 环境补 `reportOperatorIssue=none`（`__getattr__` 转发计数器）。
+
+### 未做
+
+- 没有删 `mcp_x_search.py`。`python mcp_x_search.py` 与大量测试仍依赖这个名字。
+- 没有改 env 名。
+
+---
+
+## 第六阶段记录
+
+- **日期**: 2026-08-23
+- **选题**: P2-4 / P2-5 / P2-2 / P2-3 扫尾 + 版本 `0.2.0`
+- **commit**: `6d3b763`
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **189 passed**（删除 5 条只测死函数 `reasoning_effort_for` 的 parametrize，新增 3 条 stdio/quality-gate）
+
+### 实际完成
+
+- **P2-4**: `_record_quality()`。exact-only 在 oEmbed 全中或 fallback 后各记一次；seed-then-research 在 smart extract 后记一次。测试 `test_target_pipeline_records_quality_gate_decision`。
+- **P2-5**: `mcp_server.stdio_main` 用 `asyncio.StreamReader`（可注入 reader/writer）。`tests/test_mcp_server_stdio.py` 覆盖 ping、initialized 通知、JSON 解析错误。
+- **P2-2**: 删除 `retrieve.policy.reasoning_effort_for` 与 `retrieve.payload.should_run_raw`。
+- **P2-3**: `retrieve.oembed` 改为使用 `retrieve.payload._groups`。
+- **0.2.0**: `pyproject.toml`、`mcp_tools.SERVER_VERSION`、反代 User-Agent、`x_oembed.USER_AGENT`。`mcp_posts.TOOL_VERSION` 仍为 `0.1.0`（内部 `x_posts.v1` 契约字段，不是包版本）。`CHANGELOG.md` 将此前 Unreleased 归档为 `## 0.2.0 - 2026-08-23`。
+
+### 给下一任
+
+1. 新检索代码只从 `retrieve.*` 和 `mcp_tools` 进。不要在根目录再铺 `retrieve_*.py`。
+2. 仍缺方向 E（脱敏 xAI fixture）。全套测试仍是 mock。
+3. 仍未改：错误载荷 stage 名 `stable_extract`；Fast 预算不足直接抛错 vs Smart 降级（P2-9）。改这些会动公开 JSON/错误形态。
+4. `mcp_x_search.py` 可以在下一个大版本删，但要先把测试 monkeypatch 迁到 `retrieve.x_search`。
+5. 验证口令：`ruff check . && basedpyright && pytest -q -W error`。
