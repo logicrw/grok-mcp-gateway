@@ -228,7 +228,7 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 
 ### 配套 Agent Skill
 
-在复杂调研场景中，可直接配合标准 Skill [`x-research-skill`](https://github.com/logicrw/grok-mcp-gateway)（安装在 `~/.agents/skills/x-research-skill/SKILL.md`），自动完成查询拆解、信源多方交叉比对与断言综合。
+在复杂调研场景中，可直接配合项目内置的 [`x-research-skill`](./skills/x-research-skill/SKILL.md)（同时已全局安装在 `~/.agents/skills/x-research-skill/SKILL.md`），自动完成查询拆解、信源多方交叉比对与断言综合。
 
 ---
 

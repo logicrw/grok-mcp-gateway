@@ -228,7 +228,7 @@ Downstream autonomous coding agents (Claude Code, Cursor, Antigravity, etc.) can
 
 ### Companion Agent Skill
 
-For high-level research workflows, use the canonical [`x-research-skill`](https://github.com/logicrw/grok-mcp-gateway) installed at `~/.agents/skills/x-research-skill/SKILL.md` to automatically orchestrate query decomposition, primary source cross-verification, and claim synthesis.
+For high-level research workflows, use the bundled [`x-research-skill`](./skills/x-research-skill/SKILL.md) (also available globally at `~/.agents/skills/x-research-skill/SKILL.md`) to automatically orchestrate query decomposition, primary source cross-verification, and claim synthesis.
 
 ---
 
