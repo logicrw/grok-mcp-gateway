@@ -200,7 +200,7 @@ def reasoning_effort_for(metadata: Dict[str, Any], model: str) -> Optional[str]:
 | `GROK_PROXY_FAST_MODEL` | `grok-4.20-0309-non-reasoning` | **Fast Tier** 极速经济模型。 |
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | **Raw Expansion Tier** 非结构化扩展兜底模型。 |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | `true` | 是否启用意图自适应分层。若设为 `false`，所有未指定模型的请求全部走 Smart 模型。 |
-| `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY`| `3` | 本地多个 Agent 共享网关时的上游并发搜索信号量，防止并发过高触发限流。 |
+| `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | 本地多个 Agent 共享网关时的上游并发搜索许可（兼容旧名 `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY`），防止并发过高触发限流。 |
 
 ---
 

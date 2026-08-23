@@ -248,9 +248,10 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 | `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | 单次 `x_retrieve` 总执行超时上限。 |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Fast Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Smart Lane 单次请求最大工具调用轮数。 |
-| `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | 上游 xAI 请求的并发信号量上限。 |
-| `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS` | `30.0` | 信号量排队超时上限（超时自动转入过载保护，避免雪崩）。 |
-| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | 允许访问的浏览器 Origin 白名单（英文逗号分隔，供本地网页应用跨域调用）。 |
+| `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | 上游 xAI 请求的并发许可上限（兼容旧名 `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY`）。单个请求的全部层级阶段共用一个许可。 |
+| `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS` | `30.0` | 准入排队超时上限（超时转入过载保护，绝不触发层级升级雪崩）。 |
+| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | 允许访问的浏览器 Origin 白名单（英文逗号分隔，供本地网页应用跨域调用；其余 Origin 在回环绑定下返回 403）。 |
+| `GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES` | `x_keyword_search` | 归属注入式 x_search 的 xAI 内部工具名列表，用于 auto-x_search 响应清洗时精确过滤内部产物。 |
 
 ---
 

@@ -248,9 +248,10 @@ All gateway settings can be customized via environment variables or `.env`:
 | `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | Hard total deadline for any `x_retrieve` invocation. |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Maximum tool iterations for Fast Lane. |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Maximum tool iterations for Smart Lane. |
-| `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Concurrency semaphore limit for upstream xAI calls. |
-| `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS` | `30.0` | Queue timeout before marking stage as overloaded. |
-| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | Comma-separated browser Origin whitelist (for local web apps). |
+| `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | Concurrency permit limit for upstream xAI calls (legacy `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` still honored). One permit covers all tier stages of a request. |
+| `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS` | `30.0` | Admission queue timeout before marking the request as overloaded (never triggers tier escalation). |
+| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | Comma-separated browser Origin whitelist (for local web apps). Other browser origins are rejected with 403 on loopback binds. |
+| `GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES` | `x_keyword_search` | Internal xAI tool names attributed to the injected x_search tool when stripping artifacts from auto-x_search responses. |
 
 ---
 
