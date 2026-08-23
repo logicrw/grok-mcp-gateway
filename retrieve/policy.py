@@ -73,6 +73,7 @@ class RetrievalPlan:
     allow_smart_escalation: bool
     explicit_model: bool
     route_reason: str
+    route_warning: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -280,19 +281,27 @@ def resolve_plan(
 
     if pinned_model:
         desired = _smart_effort(objective)
+        validated = _validated_effort(pinned_model, desired, capabilities)
+        route_warning = None
+        if validated is None and desired is not None:
+            # Auto-selected effort is silently unusable on this model; surface the
+            # effective-policy change instead of quietly dropping reasoning.
+            route_warning = (
+                f"reasoning_effort '{desired}' is not supported by model '{pinned_model}'; "
+                "request will run without reasoning"
+            )
         return RetrievalPlan(
             objective_mode=objective,
             target_strategy="none",
             initial_lane="custom",
             model=pinned_model,
-            reasoning_effort=_validated_effort(
-                pinned_model, desired, capabilities
-            ),
+            reasoning_effort=validated,
             max_turns=routing_config.smart_max_turns,
             stage_timeout_seconds=routing_config.smart_stage_timeout_seconds,
             allow_smart_escalation=False,
             explicit_model=True,
             route_reason="explicit_model",
+            route_warning=route_warning,
         )
 
     if routing_config.auto_tiering and _is_simple_fast_request(metadata, objective, routing_config):
@@ -309,9 +318,8 @@ def resolve_plan(
             route_reason="conservative_simple_request",
         )
 
-    effort = _validated_effort(
-        routing_config.smart_model, _smart_effort(objective), capabilities
-    )
+    desired_effort = _smart_effort(objective)
+    effort = _validated_effort(routing_config.smart_model, desired_effort, capabilities)
     return RetrievalPlan(
         objective_mode=objective,
         target_strategy="none",
@@ -326,6 +334,14 @@ def resolve_plan(
             "auto_tiering_disabled"
             if not routing_config.auto_tiering
             else "complex_or_unclassified_request"
+        ),
+        route_warning=(
+            None
+            if effort is not None
+            else (
+                f"reasoning_effort '{desired_effort}' is not supported by model "
+                f"'{routing_config.smart_model}'; request will run without reasoning"
+            )
         ),
     )
 

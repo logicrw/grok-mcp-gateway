@@ -544,3 +544,61 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 - 指标测试仍可以主动 `record_stage(stage="stable_extract")`，那是标签字符串，不是流水线产出。
 - 没有真实 xAI 采样刷新 fixture；三份是按线上形状手写的脱敏样例。
 - 验证：`pytest -q -W error` **197 passed**。
+
+## 第八阶段记录（外部架构审计采纳与修复）
+
+- **日期**: 2026-08-23
+- **输入**: 外部资深架构师（ChatGPT Pro）对抗性审计报告两份（P0×1 / P1×8 / P2×7），对照 `main` HEAD（197 tests green）逐条核验。
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **234 passed**（197 原有 + 37 新增复现用例，`tests/test_audit_phase8.py`）。
+
+### 逐条核验判定（Triaging）
+
+| 问题 | 判定 | 依据（当前源码） |
+|---|---|---|
+| P0-1 DNS-rebinding | **Confirmed** | `_validate_startup_security` 仅豁免 loopback 认证；无 Host/Origin 校验；catchall 剥离来路凭证后注入网关 OAuth 转发 api.x.ai |
+| P1-1 跨进程刷新覆盖 | **Confirmed** | `_refresh_lock` 为进程内 `asyncio.Lock`；失败路径把 stale 全量快照写回磁盘 |
+| P1-2 取消丢失轮换 token | **Confirmed** | `await asyncio.to_thread(_refresh_sync)` 的等待者被取消后线程结果被丢弃，`_save_json` 不再执行 |
+| P1-3 seed 研究阶段 0 秒预算 | **Confirmed** | `resolve_plan` 对 target 策略返回 `stage_timeout_seconds=0.0`、`max_turns=0`；`run_search_stage` 在 `timeout<=0` 时直接 raise，`seed_then_research` 的 Smart 研究阶段从未真正执行 |
+| P1-4 finalize 误删旁证 | **Confirmed** | `finalize_payload` 对所有 `target_status_ids` 应用 `_retain_exact_targets`，不区分 exact_only / seed_then_research 两种语义 |
+| P1-5 排队时间计入阶段超时 | **Confirmed** | 信号量在 `search()` 内部获取，`asyncio.wait_for` 同时包住排队+执行；过载被误判为质量失败并触发升级放大 |
+| P1-6 invalid_grant 无自愈 | **Confirmed** | `_refresh_sync` 只抛 `RuntimeError("Token refresh failed (400)")`；`error_result` 仅识别字符串 `AUTH_REQUIRED`，登录命令不透传；且超时/5xx 也被误标 `reauth_required=True` |
+| P1-7 坏帧杀死 stdio 进程 | **Confirmed** | `readline()`/`decode()` 在 JSON try 边界之外；UnicodeDecodeError / LimitOverrunError→ValueError 逃逸出 `stdio_main` |
+| P1-8 误删客户端工具调用 + CRLF 无界缓冲 | **Confirmed（修复方案修订）** | 按通用 `type=="custom_tool_call"` 删除（fixtures 证明内部名为 `x_keyword_search`，可精确归因）；SSE 只分割 `"\n\n"` |
+| P2-1 RuntimeError 同步重跑 | **Confirmed** | `_load_json/_save_json` 捕获所有 RuntimeError 后在事件循环内重跑安全检查/写盘 |
+| P2-2 无版本 CAS | **Confirmed** | 并入 P1-1 一并修复 |
+| P2-3 JSON-RPC 校验不全 | **Confirmed** | 不校验 `jsonrpc=="2.0"`；无 id 的非 initialized 消息也返回 `id:null` 响应；非对象 JSON 映射 -32603 |
+| P2-4 effort 静默省略 | **部分确认（降级）** | `reasoning_effort` 不是 `x_retrieve` 的用户参数（`RETRIEVE_ARGUMENT_KEYS`），「显式请求被静默丢弃」不可达；真实面是自定义模型 auto effort 静默省略 |
+| P2-5 参数化 URL 去重不足 | **Confirmed** | `_source_key` 用原始 URL 字符串 |
+| P2-6 非对象 auth state | **部分确认** | falsy 非对象（`[]`/`null`）已被 `not data` 拦截为 AuthRequiredError；truthy 非对象（`123`/`"abc"`/`true`）会 `AttributeError` |
+| P2-7 stdio 不关共享 client | **Confirmed** | `stdio_main` 无 finally 清理（FastAPI lifespan 关闭顺序是完整的） |
+
+无「Already Fixed」或整体「Rejected」项；报告与代码事实高度一致。P1-8/P2-4/P2-6 的**触发面**经核验后收窄，修复方案相应最小化。
+
+### 实施的修复
+
+1. **P0-1 loopback 边界中间件**（`main.py`）：`local_boundary_middleware` 在 loopback 绑定时强制 Host ∈ {127.0.0.1, localhost, ::1}（带端口亦合法），否则 421；带浏览器 `Origin` 且不在 `GROK_PROXY_ALLOWED_ORIGINS`（新 env，默认空）则 403。非浏览器本地客户端（无 Origin）不受影响；非 loopback 绑定仍走强制 PROXY_API_KEY。
+2. **P1-1/P2-2 跨进程刷新事务**（`token_manager.py`）：`refresh_access_token` 全程持有 `auth_state.json.lock` 文件锁（flock，0600）；锁内重读磁盘——他进程已刷新且未过期则直接采纳；成功写入单调 `state_version`；失败路径基于锁内最新状态合并，仅在磁盘凭据未被并发推进时落盘（杜绝 stale 快照回滚 R1）。
+3. **P1-2 刷新事务免疫取消**：刷新改为网关持有的共享 task（`_refresh_task` + `add_done_callback` 消费异常）；调用方 `await asyncio.shield(task)`——取消只释放进程内锁，刷新+落盘事务继续；后续调用者加入同一 in-flight task 而非重复消费已轮换的 refresh token。`_refresh_lock` 改为 loop-aware（同 `xai_responses` 惯例），修复嵌入式/多次 `asyncio.run` 的跨循环 Lock 报错。
+4. **P1-3 seed 研究阶段预算**（`retrieve/pipeline.py`）：研究阶段 model/max_turns/stage_timeout 从 routing config 回填（原来继承 deterministic 计划的 0 值）；`budget.stage_timeout` 统一做 min(stage, remaining) 截断，预算耗尽如实记 timeout。
+5. **P1-4 证据保留**（`retrieve/payload.py`）：`finalize_payload` 仅在 `target_strategy != "seed_then_research"` 时做 exact 过滤；seed 模式保留旁证，`target_match` 照常只报告目标命中。
+6. **P1-5 过载分类**（`retrieve/stages.py` + `x_search.py` + `pipeline.py` + `config.py`）：信号量获取独立 `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS`（默认 30s）排队超时→`StageOverloaded`；general/exact_only/seed 三条路径遇过载记录 `status="overloaded"` 并**跳过 Smart 升级与 raw 扩展**，不再放大负载。
+7. **P1-6 OAuth 错误分类**：`_refresh_sync` 解析 token endpoint JSON `error`，`invalid_grant`/`invalid_client` → `AuthRequiredError`（消息含 AUTH_REQUIRED + 登录命令，经既有管道透传 `auth_login_command`）；其余非 200 → `TokenRefreshUpstreamError(status)`。`reauth_required` 仅在凭据被拒或 400 时置 True（超时/429/5xx 不再误报）。`error_result` 对 AUTH_REQUIRED 额外标记 `stage="auth_refresh"` 与 `auth_error={code, retryable:false}`。
+8. **P1-7 stdio 帧边界**（`mcp_server.py`）：读取/长度/解码/解析纳入同一逐帧 try；自建 reader limit=1MiB；超限帧依赖 `readline` 自带的丢弃语义 + 连续 8 次上限保护；坏 UTF-8 → -32700 后继续服务；合法 ping 在坏帧后仍被应答。
+9. **P2-3 JSON-RPC 严格化**：`handle` 统一校验 envelope（对象/`jsonrpc=="2.0"`/非空 method/id 类型合法，bool id 拒绝）；一切无 id 消息（通知）不执行副作用也不回响应；非对象 JSON → -32600（原 -32603）。
+10. **P1-8 归因过滤 + SSE 解析**（`main.py`）：custom_tool_call 仅按 `name=="x_keyword_search"`（或 type x_search/x_search_call）过滤，客户端自有工具调用完整保留；`custom_tool_call_input.delta/done` 由有状态 filter 按 item_id 归因丢弃；SSE 分隔符支持 `\n\n`/`\r\n\r\n`/`\r\r` 并跨 chunk 安全，单事件缓冲上限 4M 字符，超限关闭上游。
+11. **P2-1**：删除 `_load_json/_save_json` 的 RuntimeError 同步重跑 fallback（to_thread 原样传播安全错误，只执行一次）。
+12. **P2-4**：`RetrievalPlan.route_warning` —— 自定义/未知名模型不支撑 auto effort 时，警告进入 payload `warnings`（策略漂移可见）。
+13. **P2-5**：`_canonical_url_key`（scheme/host 小写、默认端口、fragment、utm_*/fbclid/gclid 等跟踪参数剔除、剩余参数排序）用于 `_item_key`/`_post_key`/`_source_key` 的 URL 键；X 状态 URL 仍按 status ID 建键。
+14. **P2-6**：`read_local_state` 对 truthy 非对象 JSON 与非字符串 access_token 抛 `AuthRequiredError`（typed、含登录自愈），不再 AttributeError。
+15. **P2-7**：`stdio_main` 以 try/finally 收尾 `xai_responses.aclose_client()`。
+
+### 新增测试（`tests/test_audit_phase8.py`，37 例）
+
+覆盖：Host/Origin 边界（421/403/白名单放行）；他进程刷新采纳与失败不回滚、state_version 单调；取消后 R1 仍落盘且只刷新一次；20 路 401 storm 单飞；invalid_grant→AUTH_REQUIRED 自愈（含 `auth_login_command`/`stage=auth_refresh`）与 5xx 可重试不误报；seed_then_research E2E（Smart 真实执行、旁证存活）与 exact_only 过滤回归；排队过载不升级不 raw、上游零调用；stdio 坏 UTF-8/超限帧/标量 JSON/通知合规/共享 client 关闭；auto x_search 客户端工具保留、item_id 归因、CRLF/分块/溢出；`_load_json` 不重跑；effort 告警；URL 规范化折叠与语义参数区分；auth state 非法形状矩阵。
+
+### 刻意不做 / 残留
+
+- 未默认生成 PROXY_API_KEY（会破坏现有本地客户端）；Host/Origin 边界已覆盖 rebinding 与跨站浏览器两条路径，密钥仍可作为纵深防御显式配置。
+- 真实双进程 flock 竞争未做进程级集成测试（单进程内模拟并发写盘 + 采纳/回滚语义已覆盖核心不变量）。
+- `oauth_flow` 登录写入与其他写路径尚未纳入 state_version CAS（交互式低频路径，文档化于此）。
+- 审计矩阵 #8（部分成功后 Smart 429）/#9（重复帖富化）已由既有 0.2.0 测试语义覆盖（Fast 成果保留、`_post_key` status-ID 合并），未重复立项。

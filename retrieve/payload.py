@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import mcp_posts
 import xai_responses
@@ -177,7 +178,10 @@ def target_fallback_query(status_ids: list[str], metadata: Dict[str, Any]) -> st
 
 def finalize_payload(payload: Dict[str, Any], metadata: Dict[str, Any]) -> None:
     target_status_ids = list(metadata.get("target_status_ids") or [])
-    if target_status_ids:
+    # target_status_ids carries two semantics: exact_only ("output only these
+    # IDs") and seed_then_research ("these IDs are research anchors; keep the
+    # corroborating evidence acquired around them").
+    if target_status_ids and metadata.get("target_strategy") != "seed_then_research":
         _retain_exact_targets(payload, set(target_status_ids))
     target_match = _target_match(payload["items"], target_status_ids)
     if target_status_ids:
@@ -284,7 +288,9 @@ def _request_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _item_key(item: Dict[str, Any]) -> str:
-    return str(item.get("url") or f"{item.get('author')}::{item.get('text')}")
+    if item.get("url"):
+        return _canonical_url_key(str(item["url"]))
+    return f"{item.get('author')}::{item.get('text')}"
 
 
 def _post_key(post: Any) -> str:
@@ -295,7 +301,7 @@ def _post_key(post: Any) -> str:
     if status_id:
         return f"status:{status_id}"
     if url and url.strip():
-        return f"url:{url.strip()}"
+        return f"url:{_canonical_url_key(url)}"
     return f"text:{post.get('author')}::{post.get('text')}"
 
 
@@ -309,5 +315,35 @@ def _source_key(source: Any) -> str:
     if status_id:
         return f"status:{status_id}"
     if url and url.strip():
-        return f"url:{url.strip()}"
+        return f"url:{_canonical_url_key(url)}"
     return f"title:{source.get('title')}"
+
+
+_TRACKING_QUERY_PREFIXES = ("utm_",)
+_TRACKING_QUERY_KEYS = {"fbclid", "gclid", "igshid", "mc_eid", "ref_src"}
+
+
+def _canonical_url_key(url: str) -> str:
+    """Conservative dedup key: fold scheme/host case, default ports, fragments,
+    tracking parameters, and parameter order; keep semantic query values."""
+    trimmed = url.strip()
+    try:
+        parts = urlsplit(trimmed)
+        port = parts.port
+    except ValueError:
+        return trimmed.lower()
+    scheme = parts.scheme.lower()
+    hostname = (parts.hostname or "").lower()
+    if not scheme or not hostname:
+        return trimmed.lower()
+    if ":" in hostname:  # bare IPv6 literal needs brackets in netloc
+        hostname = f"[{hostname}]"
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    netloc = hostname if port is None or default_port else f"{hostname}:{port}"
+    query = sorted(
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith(_TRACKING_QUERY_PREFIXES)
+        and key.lower() not in _TRACKING_QUERY_KEYS
+    )
+    return urlunsplit((scheme, netloc, parts.path or "/", "", urlencode(query)))

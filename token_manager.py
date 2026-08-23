@@ -18,6 +18,8 @@ import stat
 import sys
 import tempfile
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -27,6 +29,14 @@ import httpx
 
 import config
 from error_sanitizer import sanitize_text
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-Unix hosts keep in-process locking only
+    fcntl = None  # type: ignore[assignment]
+
+_FLOCK_EX = getattr(fcntl, "LOCK_EX", 0)
+_FLOCK_UN = getattr(fcntl, "LOCK_UN", 0)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +64,19 @@ class AuthRequiredError(RuntimeError):
             f"AUTH_REQUIRED: {detail} Run {self.login_command} to open a browser login. {AUTH_REQUIRED_HINT}"
         )
 
+
+class TokenRefreshUpstreamError(RuntimeError):
+    """Token endpoint responded with a non-200 status that is not a typed credential rejection."""
+
+    def __init__(self, status_code: int, oauth_error: str = "") -> None:
+        self.status_code = status_code
+        self.oauth_error = oauth_error
+        super().__init__(f"Token refresh failed ({status_code})")
+
+
+# OAuth error codes that mean the refresh credential is permanently unusable.
+_NON_RECOVERABLE_OAUTH_ERRORS = {"invalid_grant", "invalid_client"}
+
 HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
 _STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
 LOCAL_AUTH_PATH = Path(
@@ -66,8 +89,20 @@ XAI_API_BASE = "https://api.x.ai"
 
 REFRESH_SKEW_SECONDS = 120
 
-# Prevent concurrent token refreshes from racing each other.
-_refresh_lock = asyncio.Lock()
+# Prevent concurrent token refreshes from racing each other. Recreated per
+# event loop (same idiom as xai_responses client locks) so embedded callers and
+# repeated asyncio.run sessions never hit a cross-loop Lock.
+_refresh_lock: Optional[asyncio.Lock] = None
+_refresh_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _refresh_single_flight_lock() -> asyncio.Lock:
+    global _refresh_lock, _refresh_lock_loop
+    loop = asyncio.get_running_loop()
+    if _refresh_lock is None or _refresh_lock_loop is not loop:
+        _refresh_lock = asyncio.Lock()
+        _refresh_lock_loop = loop
+    return _refresh_lock
 
 
 def _count_from_state(state: Dict[str, Any], key: str) -> int:
@@ -274,17 +309,46 @@ def _save_json_sync(path: Path, data: Dict[str, Any]) -> None:
 
 
 async def _load_json(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        return await asyncio.to_thread(_load_json_sync, path)
-    except RuntimeError:
-        return _load_json_sync(path)
+    return await asyncio.to_thread(_load_json_sync, path)
 
 
 async def _save_json(path: Path, data: Dict[str, Any]) -> None:
+    await asyncio.to_thread(_save_json_sync, path, data)
+
+
+@asynccontextmanager
+async def _state_file_lock() -> AsyncIterator[None]:
+    """Serialize refresh transactions across gateway processes sharing one state file.
+
+    The flock is held by a worker thread for the duration of the transaction, so
+    in-process coroutines stay responsive while another process holds the lock.
+    """
+    lock_path = LOCAL_AUTH_PATH.with_name(LOCAL_AUTH_PATH.name + ".lock")
+    if fcntl is None:  # pragma: no cover - non-Unix fallback keeps asyncio lock only
+        yield
+        return
+
+    def _acquire() -> int:
+        _ensure_private_state_dir(lock_path)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, _FLOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    fd = await asyncio.to_thread(_acquire)
     try:
-        return await asyncio.to_thread(_save_json_sync, path, data)
-    except RuntimeError:
-        return _save_json_sync(path, data)
+        yield
+    finally:
+        def _release() -> None:
+            if fcntl is not None:
+                fcntl.flock(fd, _FLOCK_UN)
+            os.close(fd)
+
+        await asyncio.to_thread(_release)
 
 
 def _validate_token_endpoint(token_endpoint: str) -> str:
@@ -382,8 +446,12 @@ async def read_local_state() -> Dict[str, Any]:
                 logger.info("Removed legacy source-tree token state after migration.")
             except OSError:
                 logger.warning("Migrated token state but could not remove legacy source-tree token file.")
+    if data is not None and not isinstance(data, dict):
+        raise AuthRequiredError("Local xAI OAuth state file is invalid (expected a JSON object).")
     if not data or not data.get("access_token"):
         raise AuthRequiredError("No local xAI OAuth credentials are available.")
+    if not isinstance(data.get("access_token"), str):
+        raise AuthRequiredError("Local xAI OAuth state has an invalid access_token field.")
     if not data.get("client_id"):
         raise AuthRequiredError("Local xAI OAuth state is missing client_id.")
     return data
@@ -407,7 +475,18 @@ def _refresh_sync(refresh_token: str, token_endpoint: str, client_id: str) -> Di
 
     if resp.status_code != 200:
         logger.debug("Token refresh failed upstream body: %s", sanitize_text(resp.text))
-        raise RuntimeError(f"Token refresh failed ({resp.status_code})")
+        oauth_error = ""
+        try:
+            error_payload = resp.json()
+        except ValueError:
+            error_payload = None
+        if isinstance(error_payload, dict):
+            raw_error = error_payload.get("error")
+            if isinstance(raw_error, str):
+                oauth_error = raw_error.strip()[:64]
+        if oauth_error in _NON_RECOVERABLE_OAUTH_ERRORS:
+            raise AuthRequiredError(f"xAI rejected the OAuth refresh credential ('{oauth_error}').")
+        raise TokenRefreshUpstreamError(resp.status_code, oauth_error)
 
     try:
         payload = resp.json()
@@ -426,49 +505,87 @@ def _refresh_sync(refresh_token: str, token_endpoint: str, client_id: str) -> Di
     }
 
 
-async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Refresh xAI OAuth tokens using the local refresh_token."""
-    refresh_token = str(state.get("refresh_token") or "").strip()
-    client_id = str(state.get("client_id") or "").strip()
-    token_endpoint = _validate_token_endpoint(str(state.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
+def _credential_newer_than(disk_state: Optional[Dict[str, Any]], attempted_access: str) -> bool:
+    """Return True when on-disk state holds a different, usable credential another writer persisted."""
+    if not isinstance(disk_state, dict):
+        return False
+    disk_access = str(disk_state.get("access_token") or "")
+    if not disk_access or disk_access == attempted_access:
+        return False
+    return not _is_expiring(disk_access)
 
-    if not refresh_token:
+
+async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Refresh xAI OAuth tokens; transaction-safe across processes sharing the state file.
+
+    The whole re-read -> refresh -> persist sequence runs under an inter-process
+    file lock, adopts a newer credential another process already persisted, and
+    never rolls the on-disk state back to a stale snapshot on failure.
+    """
+    if not str(state.get("refresh_token") or "").strip():
         raise AuthRequiredError("No refresh_token is available.")
-    if not client_id:
+    if not str(state.get("client_id") or "").strip():
         raise AuthRequiredError("No OAuth client_id is available.")
 
-    logger.info("Refreshing xAI OAuth token...")
-    try:
-        refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
-    except Exception as exc:
-        failed = dict(state)
-        failed["last_refresh_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        failed["last_refresh_status"] = "failure"
-        failed["last_refresh_error_class"] = exc.__class__.__name__
-        failed["refresh_failure_count"] = _count_from_state(state, "refresh_failure_count") + 1
-        failed["refresh_success_count"] = _count_from_state(state, "refresh_success_count")
-        failed["reauth_required"] = True
-        await _save_json(LOCAL_AUTH_PATH, failed)
-        raise
+    async with _state_file_lock():
+        attempted_access = str(state.get("access_token") or "")
 
-    updated = dict(state)
-    updated["access_token"] = refreshed["access_token"]
-    updated["refresh_token"] = refreshed["refresh_token"]
-    updated["client_id"] = client_id
-    updated["token_type"] = refreshed["token_type"]
-    updated["expires_in"] = refreshed["expires_in"]
-    updated["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    updated["last_refresh_at"] = updated["last_refresh"]
-    updated["last_refresh_status"] = "success"
-    updated["last_refresh_error_class"] = None
-    updated["refresh_token_rotated"] = refreshed["refresh_token"] != refresh_token
-    updated["refresh_success_count"] = _count_from_state(state, "refresh_success_count") + 1
-    updated["refresh_failure_count"] = _count_from_state(state, "refresh_failure_count")
-    updated["credential_source"] = state.get("credential_source") or "native_xai_oauth"
-    updated["reauth_required"] = False
-    await _save_json(LOCAL_AUTH_PATH, updated)
-    logger.info("Token refreshed successfully.")
-    return updated
+        disk = await _load_json(LOCAL_AUTH_PATH)
+        if _credential_newer_than(disk, attempted_access):
+            logger.info("Adopting token state already refreshed by another process.")
+            return dict(disk)  # type: ignore[arg-type]
+
+        base = dict(disk) if isinstance(disk, dict) and disk.get("access_token") else dict(state)
+        refresh_token = str(base.get("refresh_token") or "").strip()
+        client_id = str(base.get("client_id") or "").strip()
+        token_endpoint = _validate_token_endpoint(str(base.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
+        if not refresh_token:
+            raise AuthRequiredError("No refresh_token is available.")
+        if not client_id:
+            raise AuthRequiredError("No OAuth client_id is available.")
+
+        logger.info("Refreshing xAI OAuth token...")
+        try:
+            refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
+        except Exception as exc:
+            disk_now = await _load_json(LOCAL_AUTH_PATH)
+            if _credential_newer_than(disk_now, attempted_access):
+                # Another writer persisted a newer credential while our request
+                # was in flight; never overwrite it with this failure snapshot.
+                logger.warning("Skipping failure persist: newer token state was written concurrently.")
+                raise
+            failed = dict(disk_now) if isinstance(disk_now, dict) and disk_now.get("access_token") else base
+            failed["last_refresh_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            failed["last_refresh_status"] = "failure"
+            failed["last_refresh_error_class"] = exc.__class__.__name__
+            failed["refresh_failure_count"] = _count_from_state(failed, "refresh_failure_count") + 1
+            failed["refresh_success_count"] = _count_from_state(failed, "refresh_success_count")
+            failed["reauth_required"] = isinstance(exc, AuthRequiredError) or (
+                isinstance(exc, TokenRefreshUpstreamError) and exc.status_code == 400
+            )
+            failed["state_version"] = _count_from_state(failed, "state_version") + 1
+            await _save_json(LOCAL_AUTH_PATH, failed)
+            raise
+
+        updated = dict(base)
+        updated["access_token"] = refreshed["access_token"]
+        updated["refresh_token"] = refreshed["refresh_token"]
+        updated["client_id"] = client_id
+        updated["token_type"] = refreshed["token_type"]
+        updated["expires_in"] = refreshed["expires_in"]
+        updated["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        updated["last_refresh_at"] = updated["last_refresh"]
+        updated["last_refresh_status"] = "success"
+        updated["last_refresh_error_class"] = None
+        updated["refresh_token_rotated"] = refreshed["refresh_token"] != refresh_token
+        updated["refresh_success_count"] = _count_from_state(base, "refresh_success_count") + 1
+        updated["refresh_failure_count"] = _count_from_state(base, "refresh_failure_count")
+        updated["credential_source"] = base.get("credential_source") or "native_xai_oauth"
+        updated["reauth_required"] = False
+        updated["state_version"] = _count_from_state(base, "state_version") + 1
+        await _save_json(LOCAL_AUTH_PATH, updated)
+        logger.info("Token refreshed successfully.")
+        return updated
 
 
 async def rehydrate_from_hermes(previous_state: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -498,6 +615,16 @@ async def rehydrate_from_hermes(previous_state: Optional[Dict[str, Any]] = None)
     return rehydrated
 
 
+# Gateway-owned refresh transaction so a cancelled caller can never discard a
+# rotated refresh token before it is persisted.
+_refresh_task: Optional[asyncio.Task[Dict[str, Any]]] = None
+
+
+def _consume_refresh_task_exception(task: asyncio.Task[Dict[str, Any]]) -> None:
+    if not task.cancelled():
+        task.exception()  # mark retrieved so cancellation never leaves it unread
+
+
 async def get_access_token(
     *,
     force_refresh: bool = False,
@@ -508,7 +635,13 @@ async def get_access_token(
     If force_refresh is True and stale_access_token is provided, another
     coroutine that already refreshed the token will cause this call to return
     the new token without issuing a redundant upstream OAuth refresh.
+
+    The refresh runs as a gateway-owned shared task: caller cancellation
+    releases the in-process lock but the refresh+persist transaction keeps
+    running, and later callers join the same in-flight task instead of
+    replaying a possibly-consumed refresh token.
     """
+    global _refresh_task
     state = await read_local_state()
     access_token = str(state.get("access_token") or "").strip()
 
@@ -526,7 +659,7 @@ async def get_access_token(
 
     should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
     if should_refresh:
-        async with _refresh_lock:
+        async with _refresh_single_flight_lock():
             # Re-read under lock in case another coroutine already refreshed
             state = await read_local_state()
             access_token = str(state.get("access_token") or "").strip()
@@ -542,7 +675,16 @@ async def get_access_token(
 
             should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
             if should_refresh:
-                state = await refresh_access_token(state)
+                task = _refresh_task
+                if task is None or task.done():
+                    task = asyncio.create_task(
+                        refresh_access_token(state),
+                        name="oauth-refresh-and-persist",
+                    )
+                    task.add_done_callback(_consume_refresh_task_exception)
+                    _refresh_task = task
+                # shield: a cancelled caller must not cancel the refresh transaction
+                state = await asyncio.shield(task)
                 access_token = str(state.get("access_token") or "").strip()
 
     return access_token

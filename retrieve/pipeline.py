@@ -47,7 +47,7 @@ from retrieve.schema import (
     SCHEMA_VERSION,
     SOURCE_LIMIT,
 )
-from retrieve.stages import SearchCaller, run_search_stage
+from retrieve.stages import SearchCaller, StageOverloaded, run_search_stage
 from x_oembed import OEMBED_TIMEOUT_SECONDS, fetch_oembed_posts
 
 _quality_gate_counts: defaultdict[str, int] = defaultdict(int)
@@ -84,6 +84,8 @@ async def call_retrieve(arguments: Dict[str, Any], *, search: SearchCaller) -> D
     else:
         payload = await _run_general_pipeline(search_arguments, metadata, plan, search, budget)
 
+    if plan.route_warning:
+        payload["warnings"].append(plan.route_warning)
     add_target_citation_items(payload, metadata)
     finalize_payload(payload, metadata)
     record_retrieval_status(str(payload["retrieval_status"]))
@@ -122,6 +124,7 @@ async def _run_target_pipeline(
         fallback_arguments.pop("to_date", None)
 
         stage_name = "target_fallback" if explicit_model else "target_fast_fallback"
+        fallback_overloaded = False
         try:
             fallback_result = await run_search_stage(
                 search,
@@ -130,6 +133,18 @@ async def _run_target_pipeline(
                 budget=budget,
                 reasoning_effort=fallback_plan.reasoning_effort,
                 stage_seconds=fallback_plan.stage_timeout_seconds,
+            )
+        except StageOverloaded as exc:
+            fallback_overloaded = True
+            payload["warnings"].append(f"target fallback overloaded: {sanitize_text(exc)}")
+            payload["retrieval_stages"].append(
+                {
+                    "name": stage_name,
+                    "target_status_ids": missing_ids,
+                    "model": fallback_arguments.get("model") or "unknown",
+                    "status": "overloaded",
+                    "reason": "search_admission_queue_timeout",
+                }
             )
         except Exception as exc:
             payload["warnings"].append(f"target fallback failed: {sanitize_text(exc)}")
@@ -147,10 +162,15 @@ async def _run_target_pipeline(
             fallback_payload["retrieval_stages"][0]["target_status_ids"] = missing_ids
             merge_stage_payload(payload, fallback_payload)
 
-        # Quality check: if still missing and budget allows, escalate to Smart fallback
+        # Quality check: if still missing and budget allows, escalate to Smart fallback.
+        # Capacity exhaustion is never a reason to enqueue more work.
         still_missing = target_status_ids_needing_text(payload, metadata)
         quality = _record_quality(payload, metadata)
-        if still_missing and should_escalate_to_smart(fallback_plan, quality, remaining_seconds=budget.remaining()):
+        if (
+            still_missing
+            and not fallback_overloaded
+            and should_escalate_to_smart(fallback_plan, quality, remaining_seconds=budget.remaining())
+        ):
             record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
             smart_plan = resolve_target_fallback_plan(smart=True, objective=plan.objective_mode)
             smart_arguments = dict(search_arguments)
@@ -186,14 +206,19 @@ async def _run_target_pipeline(
 
         return payload
 
-    # seed_then_research: Seed was fetched from oEmbed, now research with Smart model
+    # seed_then_research: Seed was fetched from oEmbed, now research with Smart model.
+    # The routing plan's deterministic lane carries no executable stage values, so
+    # fall back to the Smart lane's model/turns/deadline for the research stage.
+    routing_config = get_routing_config()
     research_arguments = dict(search_arguments)
-    research_arguments["model"] = plan.model or get_routing_config().smart_model
-    research_arguments["_max_turns"] = plan.max_turns
+    research_arguments["model"] = plan.model or routing_config.smart_model
+    research_arguments["_max_turns"] = plan.max_turns or routing_config.smart_max_turns
     research_arguments["_structured_output"] = True
     if plan.reasoning_effort:
         research_arguments["_reasoning_effort"] = plan.reasoning_effort
+    research_stage_seconds = plan.stage_timeout_seconds or routing_config.smart_stage_timeout_seconds
 
+    research_overloaded = False
     try:
         research_result = await run_search_stage(
             search,
@@ -201,7 +226,18 @@ async def _run_target_pipeline(
             stage="smart_extract",
             budget=budget,
             reasoning_effort=plan.reasoning_effort,
-            stage_seconds=plan.stage_timeout_seconds,
+            stage_seconds=research_stage_seconds,
+        )
+    except StageOverloaded as exc:
+        research_overloaded = True
+        payload["warnings"].append(f"smart research overloaded: {sanitize_text(exc)}")
+        payload["retrieval_stages"].append(
+            {
+                "name": "smart_extract",
+                "model": research_arguments.get("model") or "unknown",
+                "status": "overloaded",
+                "reason": "search_admission_queue_timeout",
+            }
         )
     except Exception as exc:
         payload["warnings"].append(f"smart extract failed: {sanitize_text(exc)}")
@@ -217,7 +253,8 @@ async def _run_target_pipeline(
         merge_stage_payload(payload, research_payload)
 
     _record_quality(payload, metadata)
-    await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
+    if not research_overloaded:
+        await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
     return payload
 
 
@@ -245,6 +282,20 @@ async def _run_general_pipeline(
             reasoning_effort=plan.reasoning_effort,
             stage_seconds=plan.stage_timeout_seconds,
         )
+    except StageOverloaded as exc:
+        # Capacity exhaustion: report overload, never escalate or enqueue more stages.
+        payload = _failed_stage_payload(
+            metadata,
+            stage_name=stage_name,
+            model=str(plan.model),
+            error_text=sanitize_text(exc),
+        )
+        payload["retrieval_stages"][0]["status"] = "overloaded"
+        payload["retrieval_stages"][0]["reason"] = "search_admission_queue_timeout"
+        if payload["warnings"]:
+            payload["warnings"][-1] = f"{stage_name} overloaded: {sanitize_text(exc)}"
+        _record_quality(payload, metadata)
+        return payload
     except Exception as exc:
         if plan.initial_lane != "fast":
             raise
@@ -482,6 +533,9 @@ def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
         from token_manager import login_command
 
         payload["auth_login_command"] = login_command()
+        # The failure happened while resolving credentials, not in a search stage.
+        payload["retrieval_stages"][0]["name"] = "auth_refresh"
+        payload["auth_error"] = {"code": "AUTH_REQUIRED", "retryable": False}
     record_retrieval_status("error")
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": True}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
 from typing import Any, Dict
 
@@ -11,6 +12,7 @@ import mcp_posts
 import xai_responses
 from retrieve.policy import build_xai_responses_payload, resolve_store_flag
 from retrieve.schema import RETRIEVE_MODEL_MAX_CHARS
+from retrieve.stages import StageOverloaded
 
 TOOL_NAME = "x_search"
 X_SEARCH_INPUT_MAX_CHARS = 8000
@@ -154,5 +156,17 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
-    async with _x_search_semaphore:
+    # Admission wait is bounded separately from the stage timeout so queueing is
+    # reported as overload, never misread as a model-quality stage failure.
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(
+            _x_search_semaphore.acquire(),
+            timeout=config.GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise StageOverloaded(time.monotonic() - started) from exc
+    try:
         return await xai_responses.post(_x_search_payload(arguments))
+    finally:
+        _x_search_semaphore.release()

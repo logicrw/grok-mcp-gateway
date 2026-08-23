@@ -168,7 +168,7 @@ def test_health_reports_expired_oauth_without_secondary_auth(monkeypatch):
 
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.get("/health")
 
     assert response.status_code == 503
@@ -454,7 +454,7 @@ def test_health_and_metrics_require_proxy_auth_when_configured(monkeypatch):
     monkeypatch.setattr(main.config, "PROXY_API_KEY", "secret")
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         assert client.get("/health").status_code == 401
         assert client.get("/metrics").status_code == 401
         assert client.get("/health", headers={"Authorization": "Bearer secret"}).status_code == 200
@@ -470,7 +470,7 @@ def test_health_reports_expired_token_state(monkeypatch):
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.get("/health")
 
     assert response.status_code == 503
@@ -489,7 +489,7 @@ def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.get("/health")
 
     payload = response.json()
@@ -505,7 +505,7 @@ def test_health_reports_mcp_tool_status(monkeypatch):
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.get("/health")
 
     payload = response.json()
@@ -537,7 +537,7 @@ def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeyp
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
     monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_auth_headers)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         monkeypatch.setattr(main, "httpx_client", FakeClient())
         response = client.get("/health?deep=1")
 
@@ -554,7 +554,7 @@ def test_http_mcp_lists_x_retrieve_tool(monkeypatch):
 
     monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
@@ -570,7 +570,7 @@ def test_http_mcp_notifications_return_accepted(monkeypatch):
 
     monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
@@ -590,7 +590,7 @@ def test_catchall_token_resolution_failure_is_sanitized(monkeypatch):
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
     monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_get_auth_headers)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url="http://127.0.0.1") as client:
         response = client.get("/v1/models")
 
     assert response.status_code == 503

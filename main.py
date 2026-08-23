@@ -13,6 +13,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import socket
 import sys
 import time
@@ -73,6 +74,22 @@ def _is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(normalized).is_loopback
     except ValueError:
         return False
+
+
+# Hostnames a loopback-bound proxy may serve; anything else in the Host header
+# indicates DNS rebinding or a misdirected request and is refused.
+_LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
+
+
+def _host_header_allowed(host_header: str) -> bool:
+    host = host_header.strip().lower()
+    if not host:
+        return False
+    if host.startswith("["):
+        hostname = host[1:].split("]", 1)[0]
+    else:
+        hostname = host.split(":", 1)[0]
+    return hostname in _LOOPBACK_HOSTNAMES
 
 
 def _metric_label(value: object) -> str:
@@ -228,6 +245,26 @@ def _maybe_inject_auto_x_search(method: str, path: str, body: bytes) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+# xAI surfaces the injected x_search server-side tool as custom_tool_call items
+# under this internal name; only these are stripped so client-owned tool calls
+# in the same response survive.
+_X_SEARCH_INTERNAL_TOOL_NAMES = {"x_keyword_search"}
+
+# SSE event separators per the spec: blank line made of CRLF, LF, or CR.
+_SSE_EVENT_SEPARATOR = re.compile(r"\r\n\r\n|\n\n|\r\r")
+# Hard cap for one pending SSE event; on overflow the upstream stream is closed.
+_SSE_MAX_BUFFER_CHARS = 4_000_000
+
+
+def _is_auto_x_search_artifact(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    item_type = item.get("type")
+    if item_type in {"x_search", "x_search_call"}:
+        return True
+    return item_type == "custom_tool_call" and item.get("name") in _X_SEARCH_INTERNAL_TOOL_NAMES
+
+
 def _strip_auto_x_search_response_fields(response: dict) -> bool:
     changed = False
     tools = response.get("tools")
@@ -242,69 +279,118 @@ def _strip_auto_x_search_response_fields(response: dict) -> bool:
 
     output = response.get("output")
     if isinstance(output, list):
-        filtered_output = [
-            item for item in output
-            if not (isinstance(item, dict) and item.get("type") == "custom_tool_call")
-        ]
+        filtered_output = [item for item in output if not _is_auto_x_search_artifact(item)]
         if len(filtered_output) != len(output):
             response["output"] = filtered_output
             changed = True
     return changed
 
 
+class _AutoXSearchSSEFilter:
+    """Stateful per-request SSE sanitizer.
+
+    Tracks output-item ids attributable to the injected x_search tool so that
+    custom_tool_call_input delta/done events are dropped only for those items,
+    while client-owned custom tool calls stream through untouched.
+    """
+
+    def __init__(self) -> None:
+        self._injected_item_ids: set[str] = set()
+
+    def sanitize_event(self, block: str) -> Optional[str]:
+        event_name = ""
+        data_index: Optional[int] = None
+        data_payload = ""
+        lines = block.splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith("event:"):
+                event_name = line.removeprefix("event:").strip()
+            elif line.startswith("data:") and data_index is None:
+                data_index = index
+                data_payload = line.removeprefix("data:").strip()
+
+        payload: object = None
+        if data_payload:
+            try:
+                payload = json.loads(data_payload)
+            except json.JSONDecodeError:
+                payload = None
+
+        if isinstance(payload, dict):
+            item = payload.get("item")
+            if _is_auto_x_search_artifact(item):
+                self._remember_item(item)
+                return None
+            if event_name in {
+                "response.custom_tool_call_input.delta",
+                "response.custom_tool_call_input.done",
+            }:
+                item_id = payload.get("item_id")
+                if isinstance(item_id, str) and item_id in self._injected_item_ids:
+                    return None
+
+        if data_index is None or not data_payload:
+            return block
+
+        if not isinstance(payload, dict):
+            return block
+
+        changed = False
+        response = payload.get("response")
+        if isinstance(response, dict):
+            if isinstance(response.get("output"), list):
+                for item in list(response["output"]):
+                    if _is_auto_x_search_artifact(item):
+                        self._remember_item(item)
+            changed = _strip_auto_x_search_response_fields(response)
+        if not changed:
+            return block
+
+        lines[data_index] = f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+        return "\n".join(lines)
+
+    def _remember_item(self, item: object) -> None:
+        if isinstance(item, dict):
+            item_id = item.get("id")
+            if isinstance(item_id, str) and item_id:
+                self._injected_item_ids.add(item_id)
+
+
 def _sanitize_auto_x_search_sse_event(block: str) -> Optional[str]:
-    event_name = ""
-    data_index: Optional[int] = None
-    data_payload = ""
-    lines = block.splitlines()
-    for index, line in enumerate(lines):
-        if line.startswith("event:"):
-            event_name = line.removeprefix("event:").strip()
-        elif line.startswith("data:") and data_index is None:
-            data_index = index
-            data_payload = line.removeprefix("data:").strip()
+    """Stateless one-shot variant for non-streaming payloads and tests."""
+    return _AutoXSearchSSEFilter().sanitize_event(block)
 
-    if event_name in {
-        "response.custom_tool_call_input.delta",
-        "response.custom_tool_call_input.done",
-    }:
-        return None
-    if data_index is None or not data_payload:
-        return block
 
-    try:
-        payload = json.loads(data_payload)
-    except json.JSONDecodeError:
-        return block
-
-    item = payload.get("item")
-    if isinstance(item, dict) and item.get("type") == "custom_tool_call":
-        return None
-
-    changed = False
-    response = payload.get("response")
-    if isinstance(response, dict):
-        changed = _strip_auto_x_search_response_fields(response)
-    if not changed:
-        return block
-
-    lines[data_index] = f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
-    return "\n".join(lines)
+def _split_complete_sse_events(buffer: str) -> tuple[str, list[str]]:
+    """Split complete CRLF/LF/CR-separated events; incomplete tails stay buffered."""
+    events: list[str] = []
+    position = 0
+    while True:
+        match = _SSE_EVENT_SEPARATOR.search(buffer, position)
+        if match is None:
+            break
+        events.append(buffer[position:match.start()])
+        position = match.end()
+    return buffer[position:], events
 
 
 async def _iter_auto_x_search_compatible_sse(upstream: httpx.Response) -> AsyncGenerator[bytes, None]:
+    stream_filter = _AutoXSearchSSEFilter()
     buffer = ""
     try:
         async for chunk in upstream.aiter_text():
             buffer += chunk
-            while "\n\n" in buffer:
-                block, buffer = buffer.split("\n\n", 1)
-                sanitized = _sanitize_auto_x_search_sse_event(block)
-                if sanitized:
+            if len(buffer) > _SSE_MAX_BUFFER_CHARS:
+                logger.warning("auto x_search SSE event exceeded %d chars; closing upstream", _SSE_MAX_BUFFER_CHARS)
+                return
+            buffer, events = _split_complete_sse_events(buffer)
+            for event in events:
+                sanitized = stream_filter.sanitize_event(event)
+                if sanitized is not None:
                     yield f"{sanitized}\n\n".encode("utf-8")
-        if buffer:
-            sanitized = _sanitize_auto_x_search_sse_event(buffer)
-            if sanitized:
+        if buffer.strip():
+            sanitized = stream_filter.sanitize_event(buffer)
+            if sanitized is not None:
                 yield f"{sanitized}\n\n".encode("utf-8")
     finally:
         await upstream.aclose()
@@ -384,6 +470,32 @@ async def proxy_auth_middleware(request: Request, call_next):
                 status_code=401,
                 media_type="application/json",
                 headers={"WWW-Authenticate": "Bearer"},
+            )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def local_boundary_middleware(request: Request, call_next):
+    """Reject DNS-rebinding and cross-site browser requests on loopback binds.
+
+    Loopback binding is not an authentication boundary: a rebound browser origin
+    can address the port directly. Enforce a loopback Host allowlist and reject
+    browser Origin headers unless explicitly allowlisted. Non-browser local
+    clients send no Origin and use the real bind host, so they are unaffected.
+    """
+    if _is_loopback_host(config.HOST):
+        if not _host_header_allowed(request.headers.get("host", "")):
+            return Response(
+                content=json.dumps({"error": "Misdirected: Host header is not allowed"}),
+                status_code=421,
+                media_type="application/json",
+            )
+        origin = (request.headers.get("origin") or "").strip()
+        if origin and origin not in config.GROK_PROXY_ALLOWED_ORIGINS:
+            return Response(
+                content=json.dumps({"error": "Forbidden: browser origin is not allowed"}),
+                status_code=403,
+                media_type="application/json",
             )
     return await call_next(request)
 

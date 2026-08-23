@@ -21,6 +21,18 @@ class StageTimeout(asyncio.TimeoutError):
         super().__init__(f"{boundary} timeout")
 
 
+class StageOverloaded(Exception):
+    """Search admission queue timed out: capacity, not model quality, failed.
+
+    Overloaded stages must not trigger tier escalation, which would multiply
+    load precisely when the pipeline is saturated.
+    """
+
+    def __init__(self, waited_seconds: float) -> None:
+        self.waited_seconds = waited_seconds
+        super().__init__("search admission queue timeout")
+
+
 async def run_search_stage(
     search: SearchCaller,
     arguments: Dict[str, Any],
@@ -58,6 +70,16 @@ async def run_search_stage(
         boundary = "total" if budget.remaining() <= 0 else "stage"
         _record_stage_failure(stage, model, effective_effort, started, boundary)
         raise StageTimeout(boundary) from exc
+    except StageOverloaded:
+        record_error(stage=stage, kind="overloaded")
+        record_stage(
+            stage=stage,
+            model=model,
+            status="overloaded",
+            reasoning_effort=effective_effort,
+            duration_seconds=time.monotonic() - started,
+        )
+        raise
     except httpx.TimeoutException as exc:
         _record_stage_failure(stage, model, effective_effort, started, "upstream")
         raise StageTimeout("upstream") from exc

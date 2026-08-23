@@ -77,6 +77,12 @@ HERMES_AUTH_PATH: Path = Path(
 # non-loopback address, because incoming clients otherwise get raw xAI OAuth use.
 PROXY_API_KEY: Optional[str] = (os.getenv("PROXY_API_KEY") or "").strip() or None
 
+# Browser origins allowed to call a loopback-bound proxy (exact origin strings,
+# e.g. "http://localhost:3000"). Any other Origin header is rejected to block
+# DNS-rebinding and cross-site browser requests; non-browser local clients that
+# send no Origin are unaffected.
+GROK_PROXY_ALLOWED_ORIGINS: list[str] = _env_csv("GROK_PROXY_ALLOWED_ORIGINS")
+
 # Seconds before token expiry to trigger a background prewarm refresh
 TOKEN_REFRESH_WINDOW: int = _env_int("TOKEN_REFRESH_WINDOW", 300, minimum=30)
 
@@ -99,6 +105,11 @@ GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
     item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_retrieve"])
 ]
 GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)
+# Waiting longer than this for the search semaphore is treated as overload, not
+# as a model-quality failure, and never triggers tier escalation.
+GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS", 30.0, minimum=1.0, maximum=300.0
+)
 GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS: bool = _env_bool("GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS", False)
 
 GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS: float = _env_float(

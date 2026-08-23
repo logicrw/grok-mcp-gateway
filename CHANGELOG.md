@@ -4,6 +4,46 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ## Unreleased
 
+### Security
+
+- Reject DNS-rebinding and cross-site browser requests on loopback binds via a
+  Host allowlist (421) and browser-Origin rejection (403), with
+  `GROK_PROXY_ALLOWED_ORIGINS` as the explicit opt-in for local web origins.
+- Never roll the on-disk OAuth state back to a stale snapshot: refresh runs as
+  one inter-process locked transaction (`auth_state.json.lock` + flock) with a
+  monotonically increasing `state_version`, adopts a newer credential another
+  process already persisted, and skips failure writes when disk advanced.
+- Make the refresh+persist transaction immune to caller cancellation via a
+  gateway-owned shielded task; later callers join the in-flight refresh instead
+  of replaying an already-rotated refresh token.
+- Harden stdio framing: invalid UTF-8, oversized frames (>1 MiB), and non-object
+  JSON return `-32700`/`-32600` errors and the server keeps serving instead of
+  dying; notifications never receive responses and `jsonrpc` must be `"2.0"`.
+
+### Fixed
+
+- Run the `seed_then_research` Smart stage with real Smart-lane model, turns,
+  and deadline instead of an inherited zero-second timeout, and keep the
+  corroborating evidence posts in the final payload (exact-only filtering now
+  applies only to `exact_only`).
+- Classify OAuth `invalid_grant`/`invalid_client` as `AUTH_REQUIRED` with
+  `auth_login_command`, `stage="auth_refresh"`, and `retryable=false`; transient
+  refresh failures (timeout/429/5xx) no longer mark `reauth_required`.
+- Treat search semaphore queueing as overload (`StageOverloaded`, bounded by
+  `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS`): overloaded stages never
+  escalate to Smart or raw expansion.
+- Auto x_search shim strips only `x_keyword_search`-attributed tool-call items
+  and events, so client-owned custom tool calls survive; SSE parsing supports
+  CRLF/CR separators, chunk boundaries, and a 4 MB per-event buffer cap.
+- Canonicalize source/post/item URL keys (scheme/host case, default ports,
+  fragments, tracking parameters, parameter order) before deduplication.
+- Surface unsupported auto reasoning effort on custom models as an explicit
+  route warning instead of silently omitting reasoning.
+- Raise typed `AuthRequiredError` for non-object or malformed `auth_state.json`
+  shapes instead of crashing with `AttributeError`.
+- Close the shared xAI Responses client when a stdio session ends, and recreate
+  the refresh single-flight lock per event loop for embedded callers.
+
 ### Added
 
 - Add sanitized xAI Responses fixtures under `tests/fixtures/xai/` and replay
