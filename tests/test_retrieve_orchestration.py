@@ -4,7 +4,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import mcp_x_search
+import mcp_tools
+from retrieve import x_search
+from retrieve import pipeline
 import xai_responses
 from retrieve.policy import RequestBudget
 from x_oembed import OEmbedResult
@@ -16,7 +18,7 @@ async def _empty_oembed(status_ids, handles):
 
 def _call(arguments):
     return asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -44,8 +46,8 @@ def test_exact_targets_use_one_batched_model_fallback(monkeypatch):
             arguments["model"],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = _call(
         {
@@ -74,8 +76,8 @@ def test_target_extraction_cap_is_visible_in_result(monkeypatch):
         calls.append(dict(arguments))
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.5")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
     query = " ".join(str(2071385784154759460 + index) for index in range(7))
 
     response = _call({"query": query, "model_policy": "stable_only"})
@@ -101,8 +103,8 @@ def test_exact_target_drops_nearby_posts_from_result(monkeypatch):
             arguments["model"],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     structured = _call({"query": target})["result"]["structuredContent"]
 
@@ -121,8 +123,8 @@ def test_target_pipeline_records_quality_gate_decision(monkeypatch):
     async def fake_search(arguments):
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments["model"])
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     _call({"query": target, "model_policy": "stable_only"})
 
@@ -144,8 +146,8 @@ def test_exact_target_accepts_trusted_media_suffix(monkeypatch):
             arguments["model"],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     structured = _call({"query": media_url})["result"]["structuredContent"]
 
@@ -168,8 +170,8 @@ def test_exact_target_accepts_i_web_status_url(monkeypatch):
             arguments["model"],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     structured = _call({"query": history_url})["result"]["structuredContent"]
 
@@ -188,7 +190,7 @@ def test_model_override_has_a_hard_length_limit():
 
 
 def test_error_result_uses_parsed_latest_by_handle_mode():
-    result = mcp_x_search.mcp_retrieve.error_result(
+    result = pipeline.error_result(
         {"handles": ["xai"], "sort": "latest", "count": 5},
         "upstream failed",
     )
@@ -220,7 +222,7 @@ def test_fast_lane_failure_without_smart_budget_degrades_via_raw(monkeypatch):
             arguments["model"],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
 
     response = _call({"handles": ["xai"], "sort": "latest", "count": 5})
     structured = response["result"]["structuredContent"]
@@ -249,7 +251,7 @@ def test_exhausted_oembed_budget_is_visible_as_warning():
     metadata = {"target_status_ids": [status_id], "handles": []}
 
     asyncio.run(
-        mcp_x_search.mcp_retrieve._run_public_oembed(
+        pipeline._run_public_oembed(
             payload,
             metadata,
             RequestBudget(total_seconds=0),
@@ -261,10 +263,10 @@ def test_exhausted_oembed_budget_is_visible_as_warning():
 
 
 def test_x_search_payload_only_adds_explicit_reasoning_effort():
-    with_reasoning = mcp_x_search._x_search_payload(
+    with_reasoning = x_search._x_search_payload(
         {"query": "latest @xai", "model": "grok-4.5", "_reasoning_effort": "low"}
     )
-    without_reasoning = mcp_x_search._x_search_payload(
+    without_reasoning = x_search._x_search_payload(
         {"query": "raw candidates", "model": "grok-composer-2.5-fast", "_reasoning_effort": "high"}
     )
 

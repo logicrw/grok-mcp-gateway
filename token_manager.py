@@ -548,6 +548,7 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             refreshed = await asyncio.to_thread(_refresh_sync, refresh_token, token_endpoint, client_id)
         except Exception as exc:
+            _record_refresh_failure(exc)
             disk_now = await _load_json(LOCAL_AUTH_PATH)
             if _credential_newer_than(disk_now, attempted_access):
                 # Another writer persisted a newer credential while our request
@@ -584,6 +585,7 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
         updated["reauth_required"] = False
         updated["state_version"] = _count_from_state(base, "state_version") + 1
         await _save_json(LOCAL_AUTH_PATH, updated)
+        _clear_refresh_failure()
         logger.info("Token refreshed successfully.")
         return updated
 
@@ -618,6 +620,37 @@ async def rehydrate_from_hermes(previous_state: Optional[Dict[str, Any]] = None)
 # Gateway-owned refresh transaction so a cancelled caller can never discard a
 # rotated refresh token before it is persisted.
 _refresh_task: Optional[asyncio.Task[Dict[str, Any]]] = None
+
+# Short-lived negative cache for transient refresh failures: sequential callers
+# within this window do not hammer the token endpoint again. Credential
+# rejections (AuthRequiredError) are never suppressed so self-healing stays
+# responsive to a fresh login.
+REFRESH_FAILURE_SUPPRESS_SECONDS = 8.0
+_recent_refresh_failure: Optional[tuple[float, str]] = None
+
+
+def _record_refresh_failure(exc: Exception) -> None:
+    global _recent_refresh_failure
+    if isinstance(exc, AuthRequiredError):
+        _recent_refresh_failure = None
+        return
+    _recent_refresh_failure = (time.monotonic(), exc.__class__.__name__)
+
+
+def _clear_refresh_failure() -> None:
+    global _recent_refresh_failure
+    _recent_refresh_failure = None
+
+
+def _refresh_suppressed() -> Optional[str]:
+    global _recent_refresh_failure
+    if _recent_refresh_failure is None:
+        return None
+    failed_at, error_class = _recent_refresh_failure
+    if time.monotonic() - failed_at > REFRESH_FAILURE_SUPPRESS_SECONDS:
+        _recent_refresh_failure = None
+        return None
+    return error_class
 
 
 def _consume_refresh_task_exception(task: asyncio.Task[Dict[str, Any]]) -> None:
@@ -659,6 +692,12 @@ async def get_access_token(
 
     should_refresh = force_refresh or _is_expiring(access_token, REFRESH_SKEW_SECONDS)
     if should_refresh:
+        suppressed = _refresh_suppressed()
+        if suppressed is not None:
+            raise RuntimeError(
+                f"Token refresh failed recently ({suppressed}); retry suppressed "
+                f"for {REFRESH_FAILURE_SUPPRESS_SECONDS:.0f}s"
+            )
         async with _refresh_single_flight_lock():
             # Re-read under lock in case another coroutine already refreshed
             state = await read_local_state()
@@ -677,6 +716,12 @@ async def get_access_token(
             if should_refresh:
                 task = _refresh_task
                 if task is None or task.done():
+                    suppressed = _refresh_suppressed()
+                    if suppressed is not None:
+                        raise RuntimeError(
+                            f"Token refresh failed recently ({suppressed}); retry suppressed "
+                            f"for {REFRESH_FAILURE_SUPPRESS_SECONDS:.0f}s"
+                        )
                     task = asyncio.create_task(
                         refresh_access_token(state),
                         name="oauth-refresh-and-persist",
@@ -691,8 +736,18 @@ async def get_access_token(
 
 
 async def save_local_state(data: Dict[str, Any]) -> None:
-    """Persist token state to the local auth_state.json (async-safe, atomic)."""
-    await _save_json(LOCAL_AUTH_PATH, data)
+    """Persist token state under the inter-process lock with a monotonic state_version.
+
+    Covers interactive writers (native login, imports) so they cannot clobber a
+    concurrent refresh transaction or regress the version counter.
+    """
+    async with _state_file_lock():
+        disk = await _load_json(LOCAL_AUTH_PATH)
+        base_version = _count_from_state(disk if isinstance(disk, dict) else {}, "state_version")
+        incoming = dict(data)
+        if _count_from_state(incoming, "state_version") <= base_version:
+            incoming["state_version"] = base_version + 1
+        await _save_json(LOCAL_AUTH_PATH, incoming)
 
 
 def get_token_expiry(access_token: str) -> Optional[float]:

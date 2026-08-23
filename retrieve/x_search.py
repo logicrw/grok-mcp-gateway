@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from collections.abc import AsyncIterator
 from typing import Any, Dict
 
 import config
@@ -32,12 +35,15 @@ X_SEARCH_ARGUMENT_KEYS = {
     "_structured_output",
 }
 
-# Env alias kept for callers and /metrics. Not renamed in this package split.
-_x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY)
+_x_search_semaphore = asyncio.Semaphore(config.GROK_PROXY_RETRIEVE_CONCURRENCY)
 _x_search_counts: defaultdict[str, int] = defaultdict(int)
 _x_search_total_duration: float = 0.0
 _x_search_total_count: int = 0
 _x_search_active: int = 0
+
+# Set while a retrieve request holds an admission permit, so tier transitions
+# (Fast -> Smart -> raw) reuse one permit instead of re-queueing per stage.
+_request_permit: ContextVar[bool] = ContextVar("grok_retrieve_request_permit", default=False)
 
 _clean_handle_list = mcp_posts.clean_handle_list
 _clean_iso8601_date = mcp_posts.clean_iso8601_date
@@ -109,7 +115,7 @@ def metrics_lines() -> list[str]:
             f"mcp_x_retrieve_active_requests {_x_search_active}",
             "# HELP mcp_x_retrieve_concurrency_limit Configured MCP x_retrieve concurrency limit",
             "# TYPE mcp_x_retrieve_concurrency_limit gauge",
-            f"mcp_x_retrieve_concurrency_limit {config.GROK_PROXY_MCP_X_SEARCH_CONCURRENCY}",
+            f"mcp_x_retrieve_concurrency_limit {config.GROK_PROXY_RETRIEVE_CONCURRENCY}",
         ]
     )
     lines.extend(pipeline.metrics_lines())
@@ -155,18 +161,42 @@ def _x_search_payload(arguments: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
-    # Admission wait is bounded separately from the stage timeout so queueing is
+async def _acquire_admission() -> None:
+    # Admission wait is bounded separately from stage timeouts so queueing is
     # reported as overload, never misread as a model-quality stage failure.
     started = time.monotonic()
     try:
         await asyncio.wait_for(
             _x_search_semaphore.acquire(),
-            timeout=config.GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS,
+            timeout=config.GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError as exc:
         raise StageOverloaded(time.monotonic() - started) from exc
+
+
+@asynccontextmanager
+async def request_admission() -> AsyncIterator[None]:
+    """Hold one generative permit for an entire retrieve request.
+
+    The pipeline wraps all tier transitions of one request in this context, so
+    admission queuing happens once per request; individual stages then run
+    without re-queueing behind the semaphore. Nested use is a no-op.
+    """
+    if _request_permit.get():
+        yield
+        return
+    await _acquire_admission()
+    token = _request_permit.set(True)
     try:
-        return await xai_responses.post(_x_search_payload(arguments))
+        yield
     finally:
+        _request_permit.reset(token)
         _x_search_semaphore.release()
+
+
+async def _call_x_search_result(arguments: Dict[str, Any]) -> xai_responses.ResponsesResult:
+    if not _request_permit.get():
+        # Direct caller (no pipeline admission context): admit standalone.
+        async with request_admission():
+            return await xai_responses.post(_x_search_payload(arguments))
+    return await xai_responses.post(_x_search_payload(arguments))

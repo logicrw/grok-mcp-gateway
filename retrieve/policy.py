@@ -247,6 +247,12 @@ def model_supports_reasoning_effort(model: str) -> bool:
     return bool(caps.reasoning_efforts)
 
 
+def model_supports_structured_output(model: str) -> bool:
+    """Return True only if the model is known to support strict JSON schema output."""
+    caps = _capabilities_for(model, DEFAULT_CAPABILITIES)
+    return caps.structured_outputs
+
+
 def resolve_plan(
     metadata: Mapping[str, Any],
     *,
@@ -282,13 +288,20 @@ def resolve_plan(
     if pinned_model:
         desired = _smart_effort(objective)
         validated = _validated_effort(pinned_model, desired, capabilities)
-        route_warning = None
+        notices: list[str] = []
         if validated is None and desired is not None:
             # Auto-selected effort is silently unusable on this model; surface the
             # effective-policy change instead of quietly dropping reasoning.
-            route_warning = (
+            notices.append(
                 f"reasoning_effort '{desired}' is not supported by model '{pinned_model}'; "
                 "request will run without reasoning"
+            )
+        if not _capabilities_for(pinned_model, capabilities).structured_outputs:
+            # Sending a strict json_schema to an unknown model risks an upstream
+            # 400; run without it and say so instead of failing opaquely.
+            notices.append(
+                f"model '{pinned_model}' is not known to support structured outputs; "
+                "stage will run without the strict JSON schema"
             )
         return RetrievalPlan(
             objective_mode=objective,
@@ -301,7 +314,7 @@ def resolve_plan(
             allow_smart_escalation=False,
             explicit_model=True,
             route_reason="explicit_model",
-            route_warning=route_warning,
+            route_warning="; ".join(notices) if notices else None,
         )
 
     if routing_config.auto_tiering and _is_simple_fast_request(metadata, objective, routing_config):

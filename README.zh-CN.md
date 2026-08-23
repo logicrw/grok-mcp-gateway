@@ -201,7 +201,9 @@ print(response.choices[0].message.content)
 | `to_date` | string | 可选 | 搜索结束日期（ISO8601，如 `2026-08-15`）。 |
 | `count` | integer | 可选 | 期望返回推文数量（默认 `10`，上限 `20`）。 |
 | `sort` | string | 可选 | `latest` 或 `relevance`（query 检索默认 `relevance`；纯 handles 检索默认 `latest`）。 |
+| `best_effort_filters` | object | 可选 | 互动量过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。 |
 | `quality` | object | 可选 | 自定义质量门禁：`min_items`、`require_status_url`、`require_original_text`。 |
+| `_reasoning_effort` | string | 可选 | 显式推理档位：`low`、`medium`、`high`、`xhigh`（grok-4.6 支持透传）。 |
 | `model_policy` | string | 可选 | `auto`、`stable_only` 或 `raw_expanded`。 |
 | `model` | string | 可选 | 显式指定模型覆盖（如 `grok-4.6`、`grok-4.5`）。 |
 
@@ -213,8 +215,20 @@ print(response.choices[0].message.content)
   *(自动路由至 Smart Lane：Grok 4.6 + medium 推理)*
 - **推文直链解析**：`{"query": "https://x.com/xai/status/2087630662631100586"}`  
   *(自动路由至确定性 oEmbed：0 模型调用，毫秒级保真返回)*
-- **事实与断言核查**：`{"query": "xAI 是否在8月12日正式发布了 Grok 4.6？", "intent": "verify_claim"}`  
-  *(自动路由至 Smart Lane：high 推理档位严格求证)*
+- **事实与断言核查**：`{"query": "xAI 是否在8月12日正式发布了 Grok 4.6？", "intent": "verify_claim", "_reasoning_effort": "high"}`  
+  *(自动路由至 Smart Lane：high/xhigh 推理档位严格求证)*
+
+### Agent 自动自愈登录机制
+
+当认证凭证过期或需要重新授权时，`x_retrieve` 会返回 `AUTH_REQUIRED` 错误，并附带预格式化的绝对路径登录指令：
+```text
+AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv/bin/python /path/to/main.py --login` to open browser.
+```
+调用该工具的自主编程智能体（Claude Code、Cursor、Antigravity 等）可在终端直接执行该命令唤起浏览器供用户批准，授权成功后自动重试本次工具调用。
+
+### 配套 Agent Skill
+
+在复杂调研场景中，可直接配合标准 Skill [`x-research-skill`](https://github.com/logicrw/grok-mcp-gateway)（安装在 `~/.agents/skills/x-research-skill/SKILL.md`），自动完成查询拆解、信源多方交叉比对与断言综合。
 
 ---
 
@@ -235,13 +249,16 @@ print(response.choices[0].message.content)
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Fast Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Smart Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | 上游 xAI 请求的并发信号量上限。 |
+| `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS` | `30.0` | 信号量排队超时上限（超时自动转入过载保护，避免雪崩）。 |
+| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | 允许访问的浏览器 Origin 白名单（英文逗号分隔，供本地网页应用跨域调用）。 |
 
 ---
 
 ## 安全与隐私保护
 
 - **零提示词与正文落盘**：网关绝不将用户的 prompt、推文正文或 OAuth Token 写入磁盘日志或 Prometheus 指标。
-- **严格文件权限保护**：OAuth Token 状态存储（`~/.local/state/grok-oauth-proxy/`）强制执行 POSIX `0700` 目录与 `0600` 文件只读权限。
+- **严格文件权限与文件锁**：OAuth Token 状态存储（`~/.local/state/grok-oauth-proxy/`）强制执行 POSIX `0700` 目录与 `0600` 文件权限，配有跨进程 `flock` 锁与原子写盘。
+- **DNS 重绑定与 Origin 深度防御**：Loopback 监听严格执行 Host 白名单（`127.0.0.1`、`localhost`、`::1`）拦截，并拒绝对外未经授权的跨站浏览器 `Origin` 请求。
 - **完全解耦的状态管理**：网关独立维护自身的刷新凭据，绝不反向修改或污染外部客户端的私有配置文件。
 
 ---

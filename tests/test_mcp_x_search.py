@@ -8,7 +8,11 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import mcp_x_search
+import mcp_tools
+from retrieve import x_search
+from retrieve import pipeline
+import config
+import mcp_posts
 import xai_responses
 from x_oembed import OEmbedPost, OEmbedResult
 
@@ -18,7 +22,7 @@ async def _empty_oembed(status_ids, handles):
 
 
 def test_build_x_search_tool_keeps_only_requested_options():
-    tool = mcp_x_search._build_x_search_tool(
+    tool = x_search._build_x_search_tool(
         {
             "allowed_x_handles": ["@xai", " elonmusk "],
             "from_date": "2026-05-18",
@@ -38,14 +42,14 @@ def test_build_x_search_tool_keeps_only_requested_options():
 
 
 def test_build_x_search_tool_keeps_date_only_to_date_inclusive():
-    tool = mcp_x_search._build_x_search_tool({"from_date": "2026-05-18", "to_date": "2026-05-18"})
+    tool = x_search._build_x_search_tool({"from_date": "2026-05-18", "to_date": "2026-05-18"})
 
     assert tool["from_date"] == "2026-05-18"
     assert tool["to_date"] == "2026-05-18"
 
 
 def test_build_x_search_tool_keeps_datetime_to_date_exact():
-    tool = mcp_x_search._build_x_search_tool(
+    tool = x_search._build_x_search_tool(
         {"from_date": "2026-05-18T00:00:00Z", "to_date": "2026-05-18T23:59:59Z"}
     )
 
@@ -54,14 +58,14 @@ def test_build_x_search_tool_keeps_datetime_to_date_exact():
 
 
 def test_build_x_search_tool_supports_excluded_handles():
-    tool = mcp_x_search._build_x_search_tool({"excluded_x_handles": ["@grok"]})
+    tool = x_search._build_x_search_tool({"excluded_x_handles": ["@grok"]})
 
     assert tool == {"type": "x_search", "excluded_x_handles": ["grok"]}
 
 
 def test_build_x_search_tool_rejects_conflicting_handle_filters():
     try:
-        mcp_x_search._build_x_search_tool(
+        x_search._build_x_search_tool(
             {"allowed_x_handles": ["xai"], "excluded_x_handles": ["grok"]}
         )
     except ValueError as exc:
@@ -72,7 +76,7 @@ def test_build_x_search_tool_rejects_conflicting_handle_filters():
 
 def test_build_x_search_tool_rejects_invalid_dates():
     try:
-        mcp_x_search._build_x_search_tool({"from_date": "today"})
+        x_search._build_x_search_tool({"from_date": "today"})
     except ValueError as exc:
         assert "ISO8601" in str(exc)
     else:
@@ -81,7 +85,7 @@ def test_build_x_search_tool_rejects_invalid_dates():
 
 def test_build_x_search_tool_rejects_reversed_dates():
     try:
-        mcp_x_search._build_x_search_tool({"from_date": "2026-05-20", "to_date": "2026-05-18"})
+        x_search._build_x_search_tool({"from_date": "2026-05-20", "to_date": "2026-05-18"})
     except ValueError as exc:
         assert "from_date" in str(exc)
     else:
@@ -90,7 +94,7 @@ def test_build_x_search_tool_rejects_reversed_dates():
 
 def test_build_x_search_tool_rejects_invalid_handles():
     try:
-        mcp_x_search._build_x_search_tool({"allowed_x_handles": ["xai/evil"]})
+        x_search._build_x_search_tool({"allowed_x_handles": ["xai/evil"]})
     except ValueError as exc:
         assert "X handles" in str(exc)
     else:
@@ -98,7 +102,7 @@ def test_build_x_search_tool_rejects_invalid_handles():
 
 
 def test_build_latest_posts_search_arguments_constrains_handle_and_dates():
-    arguments, metadata = mcp_x_search._build_latest_posts_search_arguments(
+    arguments, metadata = mcp_posts.build_latest_posts_search_arguments(
         {"handle": "@logicrw", "count": 5, "from_date": "2026-05-01", "to_date": "2026-05-18"}
     )
 
@@ -113,7 +117,7 @@ def test_build_latest_posts_search_arguments_constrains_handle_and_dates():
 
 def test_build_latest_posts_search_arguments_rejects_multiple_handles():
     try:
-        mcp_x_search._build_latest_posts_search_arguments({"handle": "xai,openai"})
+        mcp_posts.build_latest_posts_search_arguments({"handle": "xai,openai"})
     except ValueError as exc:
         assert "single X handle" in str(exc)
     else:
@@ -122,7 +126,7 @@ def test_build_latest_posts_search_arguments_rejects_multiple_handles():
 
 def test_build_latest_posts_search_arguments_rejects_bad_count():
     try:
-        mcp_x_search._build_latest_posts_search_arguments({"handle": "xai", "count": 30})
+        mcp_posts.build_latest_posts_search_arguments({"handle": "xai", "count": 30})
     except ValueError as exc:
         assert "between 1 and 20" in str(exc)
     else:
@@ -130,7 +134,7 @@ def test_build_latest_posts_search_arguments_rejects_bad_count():
 
 
 def test_compile_time_range_parses_week_before_last():
-    compiled = mcp_x_search._compile_time_range({"time_range": "上上周"}, today=date(2026, 5, 18))
+    compiled = mcp_posts.compile_time_range({"time_range": "上上周"}, today=date(2026, 5, 18))
 
     assert compiled["from_date"] == "2026-05-04"
     assert compiled["to_date"] == "2026-05-10"
@@ -138,7 +142,7 @@ def test_compile_time_range_parses_week_before_last():
 
 
 def test_compile_time_range_parses_month_day_range_with_local_year():
-    compiled = mcp_x_search._compile_time_range(
+    compiled = mcp_posts.compile_time_range(
         {"time_range": "4月1日到4月2日"}, today=date(2026, 5, 18)
     )
 
@@ -148,7 +152,7 @@ def test_compile_time_range_parses_month_day_range_with_local_year():
 
 
 def test_compile_time_range_marks_unparsed_text():
-    compiled = mcp_x_search._compile_time_range({"time_range": "AI寒武纪之后那段时间"})
+    compiled = mcp_posts.compile_time_range({"time_range": "AI寒武纪之后那段时间"})
 
     assert compiled["compiled"] is False
     assert compiled["from_date"] is None
@@ -156,7 +160,7 @@ def test_compile_time_range_marks_unparsed_text():
 
 
 def test_build_posts_search_arguments_supports_flexible_filters():
-    arguments, metadata = mcp_x_search._build_posts_search_arguments(
+    arguments, metadata = mcp_posts.build_posts_search_arguments(
         {
             "handles": ["@logicrw", "xai"],
             "query": "Hermes Agent",
@@ -180,7 +184,7 @@ def test_build_posts_search_arguments_supports_flexible_filters():
 
 def test_build_posts_search_arguments_requires_handle_or_query():
     try:
-        mcp_x_search._build_posts_search_arguments({"time_range": "上个月"})
+        mcp_posts.build_posts_search_arguments({"time_range": "上个月"})
     except ValueError as exc:
         assert "at least one handle or a query" in str(exc)
     else:
@@ -189,49 +193,49 @@ def test_build_posts_search_arguments_requires_handle_or_query():
 
 def test_build_posts_search_arguments_accepts_retrieve_query_contract_and_rejects_over_limit():
     try:
-        mcp_x_search._build_posts_search_arguments({"handles": ["xai"], "unknown": True})
+        mcp_posts.build_posts_search_arguments({"handles": ["xai"], "unknown": True})
     except ValueError as exc:
         assert "unsupported argument keys" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
-    query_at_limit = "x" * mcp_x_search.mcp_posts.POST_QUERY_MAX_CHARS
-    arguments, metadata = mcp_x_search._build_posts_search_arguments({"query": query_at_limit})
+    query_at_limit = "x" * mcp_posts.POST_QUERY_MAX_CHARS
+    arguments, metadata = mcp_posts.build_posts_search_arguments({"query": query_at_limit})
     assert metadata["query"] == query_at_limit
     assert isinstance(arguments["query"], str)
-    payload = mcp_x_search._x_search_payload(arguments)
+    payload = x_search._x_search_payload(arguments)
     assert query_at_limit in payload["input"]
 
     try:
-        mcp_x_search._build_posts_search_arguments({"query": "x" * (mcp_x_search.mcp_posts.POST_QUERY_MAX_CHARS + 1)})
+        mcp_posts.build_posts_search_arguments({"query": "x" * (mcp_posts.POST_QUERY_MAX_CHARS + 1)})
     except ValueError as exc:
-        assert f"at most {mcp_x_search.mcp_posts.POST_QUERY_MAX_CHARS}" in str(exc)
+        assert f"at most {mcp_posts.POST_QUERY_MAX_CHARS}" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
 
 def test_x_search_payload_rejects_unknown_keys_and_long_query():
     try:
-        mcp_x_search._x_search_payload({"query": "hello", "unknown": True})
+        x_search._x_search_payload({"query": "hello", "unknown": True})
     except ValueError as exc:
         assert "unsupported argument keys" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
     try:
-        mcp_x_search._x_search_payload({"query": ["xai"]})
+        x_search._x_search_payload({"query": ["xai"]})
     except ValueError as exc:
         assert "query must be a string" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
-    payload = mcp_x_search._x_search_payload({"query": "x" * mcp_x_search.X_SEARCH_INPUT_MAX_CHARS})
-    assert len(payload["input"]) == mcp_x_search.X_SEARCH_INPUT_MAX_CHARS
+    payload = x_search._x_search_payload({"query": "x" * x_search.X_SEARCH_INPUT_MAX_CHARS})
+    assert len(payload["input"]) == x_search.X_SEARCH_INPUT_MAX_CHARS
 
     try:
-        mcp_x_search._x_search_payload({"query": "x" * (mcp_x_search.X_SEARCH_INPUT_MAX_CHARS + 1)})
+        x_search._x_search_payload({"query": "x" * (x_search.X_SEARCH_INPUT_MAX_CHARS + 1)})
     except ValueError as exc:
-        assert f"at most {mcp_x_search.X_SEARCH_INPUT_MAX_CHARS}" in str(exc)
+        assert f"at most {x_search.X_SEARCH_INPUT_MAX_CHARS}" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
@@ -249,11 +253,11 @@ def test_extract_output_text_supports_responses_content_shape():
         ]
     }
 
-    assert mcp_x_search._extract_output_text(response) == "first\nsecond"
+    assert x_search._extract_output_text(response) == "first\nsecond"
 
 
 def test_tools_list_returns_only_retrieve_tool_by_default():
-    response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+    response = asyncio.run(mcp_tools._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
 
     tools = {tool["name"]: tool for tool in response["result"]["tools"]}
 
@@ -285,14 +289,14 @@ def test_tools_list_returns_only_retrieve_tool_by_default():
 
 
 def test_initialize_uses_structured_content_protocol_version():
-    response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+    response = asyncio.run(mcp_tools._handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
 
     assert response["result"]["protocolVersion"] == "2025-06-18"
 
 
 def test_initialize_can_echo_supported_legacy_protocol_version():
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -307,7 +311,7 @@ def test_initialize_can_echo_supported_legacy_protocol_version():
 
 def test_tools_call_rejects_invalid_params():
     response = asyncio.run(
-        mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": "bad"})
+        mcp_tools._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": "bad"})
     )
 
     assert response["error"]["code"] == -32602
@@ -316,7 +320,7 @@ def test_tools_call_rejects_invalid_params():
 
 def test_tools_call_rejects_invalid_arguments():
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -331,18 +335,18 @@ def test_tools_call_rejects_invalid_arguments():
 
 
 def test_tools_list_respects_allowlist(monkeypatch):
-    monkeypatch.setattr(mcp_x_search.config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
+    monkeypatch.setattr(config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
 
-    response = asyncio.run(mcp_x_search._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+    response = asyncio.run(mcp_tools._handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
 
     assert response["result"]["tools"] == []
 
 
 def test_tools_call_respects_allowlist(monkeypatch):
-    monkeypatch.setattr(mcp_x_search.config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
+    monkeypatch.setattr(config, "GROK_GATEWAY_MCP_TOOL_ALLOWLIST", [])
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -358,7 +362,7 @@ def test_tools_call_respects_allowlist(monkeypatch):
 
 def test_removed_tool_names_return_clear_error():
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -374,7 +378,7 @@ def test_removed_tool_names_return_clear_error():
 
 
 def test_tools_call_wraps_retrieve_research_result(monkeypatch):
-    before = mcp_x_search._x_search_total_count
+    before = x_search._x_search_total_count
 
     async def fake_call(arguments):
         assert "latest @xai posts" in arguments["query"]
@@ -388,11 +392,11 @@ def test_tools_call_wraps_retrieve_research_result(monkeypatch):
             credential_source="xai-oauth",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -411,7 +415,7 @@ def test_tools_call_wraps_retrieve_research_result(monkeypatch):
     assert structured["items"][0]["url"] == "https://x.com/xai/status/1"
     assert structured["sources"] == [{"url": "https://x.com/xai/status/1"}]
     assert structured["request"]["query"] == "latest @xai posts"
-    assert mcp_x_search._x_search_total_count == before + 1
+    assert x_search._x_search_total_count == before + 1
 
 
 def test_tools_call_sanitizes_upstream_error(monkeypatch):
@@ -420,11 +424,11 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
             "xAI Responses request failed with upstream status 500: refresh_token=super-secret Authorization: Bearer abc"
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -522,18 +526,18 @@ def test_xai_responses_caps_citation_sources():
 
 
 def test_tools_call_wraps_retrieve_latest_by_handle_result(monkeypatch):
-    before = mcp_x_search._x_search_total_count
+    before = x_search._x_search_total_count
     seen = {}
 
     async def fake_call(arguments):
         seen.update(arguments)
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -558,7 +562,7 @@ def test_tools_call_wraps_retrieve_latest_by_handle_result(monkeypatch):
     assert response["result"]["structuredContent"]["request"]["lookback_days"] == 30
     assert response["result"]["structuredContent"]["posts"] == []
     assert response["result"]["structuredContent"]["items"] == []
-    assert mcp_x_search._x_search_total_count == before + 1
+    assert x_search._x_search_total_count == before + 1
 
 
 def test_tools_call_routes_status_targets_before_latest_by_handle(monkeypatch):
@@ -568,11 +572,11 @@ def test_tools_call_routes_status_targets_before_latest_by_handle(monkeypatch):
         seen.update(arguments)
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, "grok-4.3")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -607,13 +611,13 @@ def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatc
             {},
             [{"url": "https://x.com/logicrw/status/2"}],
             None,
-            mcp_x_search.mcp_retrieve.RAW_MODEL,
+            pipeline.RAW_MODEL,
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -632,7 +636,7 @@ def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatc
 
     structured = response["result"]["structuredContent"]
     assert len(calls) == 3
-    assert calls[2]["model"] == mcp_x_search.mcp_retrieve.RAW_MODEL
+    assert calls[2]["model"] == pipeline.RAW_MODEL
     assert structured["items"][0]["text"] == "raw latest"
     assert structured["retrieval_stages"][-1]["status"] == "success"
 
@@ -647,11 +651,11 @@ def test_tools_call_reports_no_match_for_missing_target_status(monkeypatch):
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -695,11 +699,11 @@ def test_tools_call_uses_target_fallback_for_missing_status_id(monkeypatch):
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -737,11 +741,11 @@ def test_tools_call_marks_citation_backed_target_without_text_as_degraded(monkey
             arguments.get("model") or "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -798,11 +802,11 @@ def test_tools_call_fills_target_text_from_public_oembed(monkeypatch):
             warnings=[],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", fake_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -852,11 +856,11 @@ def test_tools_call_uses_fallback_after_oembed_timeout(monkeypatch):
     async def fake_oembed(status_ids, handles):
         raise asyncio.TimeoutError()
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", fake_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -894,11 +898,11 @@ def test_tools_call_drops_untrusted_target_fallback_diagnostics(monkeypatch):
             arguments.get("model") or "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -927,11 +931,11 @@ def test_tools_call_reports_degraded_for_partial_target_status_match(monkeypatch
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -953,7 +957,7 @@ def test_tools_call_reports_degraded_for_partial_target_status_match(monkeypatch
 
 
 def test_tools_call_wraps_retrieve_posts_result(monkeypatch):
-    before = mcp_x_search._x_search_total_count
+    before = x_search._x_search_total_count
     seen = {}
 
     async def fake_call(arguments):
@@ -966,10 +970,10 @@ def test_tools_call_wraps_retrieve_posts_result(monkeypatch):
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -991,7 +995,7 @@ def test_tools_call_wraps_retrieve_posts_result(monkeypatch):
     assert response["result"]["structuredContent"]["schema_version"] == "x_retrieve.v1"
     assert response["result"]["structuredContent"]["source_extraction_status"] == "extracted_unmapped"
     assert response["result"]["structuredContent"]["sources"] == [{"url": "https://x.com/xai/status/1"}]
-    assert mcp_x_search._x_search_total_count == before + 1
+    assert x_search._x_search_total_count == before + 1
 
 
 def test_tools_call_runs_raw_expansion_when_quality_gate_fails(monkeypatch):
@@ -1012,13 +1016,13 @@ def test_tools_call_runs_raw_expansion_when_quality_gate_fails(monkeypatch):
             {},
             [{"url": "https://x.com/xai/status/2"}],
             None,
-            mcp_x_search.mcp_retrieve.RAW_MODEL,
+            pipeline.RAW_MODEL,
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -1033,11 +1037,11 @@ def test_tools_call_runs_raw_expansion_when_quality_gate_fails(monkeypatch):
 
     structured = response["result"]["structuredContent"]
     assert len(calls) == 2
-    assert calls[1]["model"] == mcp_x_search.mcp_retrieve.RAW_MODEL
+    assert calls[1]["model"] == pipeline.RAW_MODEL
     assert "Expand raw candidate X posts" in calls[1]["query"]
     assert [item["text"] for item in structured["items"]] == ["stable candidate", "raw candidate"]
     assert structured["retrieval_stages"][-1]["name"] == "raw_expansion"
-    assert structured["models_used"] == ["grok-4.3", mcp_x_search.mcp_retrieve.RAW_MODEL]
+    assert structured["models_used"] == ["grok-4.3", pipeline.RAW_MODEL]
 
 
 def test_tools_call_can_disable_raw_expansion_with_stable_only(monkeypatch):
@@ -1053,10 +1057,10 @@ def test_tools_call_can_disable_raw_expansion_with_stable_only(monkeypatch):
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -1097,13 +1101,13 @@ def test_tools_call_respects_require_original_text_quality_gate(monkeypatch):
             {},
             [{"url": "https://x.com/xai/status/2"}],
             None,
-            mcp_x_search.mcp_retrieve.RAW_MODEL,
+            pipeline.RAW_MODEL,
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -1141,10 +1145,10 @@ def test_tools_call_sanitizes_raw_expansion_failure_warning(monkeypatch):
             )
         raise ValueError("raw failed refresh_token=super-secret Authorization: Bearer abcdefghi")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -1185,10 +1189,10 @@ def test_posts_result_does_not_trust_model_contract_fields(monkeypatch):
             "grok-4.3",
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_call)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -1212,7 +1216,7 @@ def test_posts_result_does_not_trust_model_contract_fields(monkeypatch):
 
 
 def test_metrics_lines_include_x_retrieve_counters():
-    lines = "\n".join(mcp_x_search.metrics_lines())
+    lines = "\n".join(mcp_tools.metrics_lines())
 
     assert "mcp_x_retrieve_requests_total" in lines
     assert "mcp_x_retrieve_concurrency_limit" in lines
@@ -1222,7 +1226,7 @@ def test_metrics_lines_include_x_retrieve_counters():
 
 def test_unknown_tool_returns_protocol_error():
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "other"}}
         )
     )

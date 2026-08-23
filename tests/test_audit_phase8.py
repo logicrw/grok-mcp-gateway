@@ -18,16 +18,15 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
 import mcp_server
-import mcp_x_search
+import mcp_tools
 import token_manager
 import xai_responses
-from retrieve import x_search
+from retrieve import pipeline, x_search
 from retrieve.payload import _canonical_url_key, _source_key, merge_stage_payload
 from retrieve.pipeline import error_result
 from retrieve.policy import RequestBudget, resolve_plan
@@ -57,13 +56,12 @@ _VALID_STATE: dict = {
 # ---------------------------------------------------------------------------
 # P0-1: loopback DNS-rebinding boundary
 # ---------------------------------------------------------------------------
-def _loopback_client(monkeypatch, state=None):
+def _patch_health_state(monkeypatch, state=None):
     async def fake_read_local_state():
         return state or _VALID_STATE
 
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
-    return TestClient(main.app, base_url="http://127.0.0.1")
 
 
 def test_host_header_allowlist_unit():
@@ -77,17 +75,17 @@ def test_host_header_allowlist_unit():
     assert not main._host_header_allowed("127.0.0.1.evil.example")
 
 
-def test_loopback_proxy_rejects_rebound_host_header(monkeypatch):
-    client = _loopback_client(monkeypatch)
-    with client:
+def test_loopback_proxy_rejects_rebound_host_header(monkeypatch, loopback_client):
+    _patch_health_state(monkeypatch)
+    with loopback_client() as client:
         response = client.get("/health", headers={"Host": "attacker.example:9996"})
     assert response.status_code == 421
     assert "Misdirected" in response.text
 
 
-def test_loopback_proxy_rejects_cross_site_browser_origin(monkeypatch):
-    client = _loopback_client(monkeypatch)
-    with client:
+def test_loopback_proxy_rejects_cross_site_browser_origin(monkeypatch, loopback_client):
+    _patch_health_state(monkeypatch)
+    with loopback_client() as client:
         response = client.post(
             "/v1/responses",
             json={"model": "grok-4.6", "input": "hi"},
@@ -97,15 +95,15 @@ def test_loopback_proxy_rejects_cross_site_browser_origin(monkeypatch):
     assert "origin" in response.text.lower()
 
 
-def test_loopback_proxy_allows_configured_browser_origin(monkeypatch):
-    client = _loopback_client(monkeypatch)
+def test_loopback_proxy_allows_configured_browser_origin(monkeypatch, loopback_client):
+    _patch_health_state(monkeypatch)
 
     async def fake_get_auth_headers():
         raise RuntimeError("should not be reached")  # pragma: no cover - boundary passes, route 503s later
 
     monkeypatch.setattr(main.config, "GROK_PROXY_ALLOWED_ORIGINS", ["http://localhost:3000"])
     monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_get_auth_headers)
-    with client:
+    with loopback_client() as client:
         response = client.post(
             "/v1/responses",
             json={"model": "grok-4.6", "input": "hi"},
@@ -114,9 +112,9 @@ def test_loopback_proxy_allows_configured_browser_origin(monkeypatch):
     assert response.status_code == 503  # passed the boundary, failed on token resolution
 
 
-def test_non_browser_local_client_without_origin_still_works(monkeypatch):
-    client = _loopback_client(monkeypatch)
-    with client:
+def test_non_browser_local_client_without_origin_still_works(monkeypatch, loopback_client):
+    _patch_health_state(monkeypatch)
+    with loopback_client() as client:
         response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -343,10 +341,10 @@ def test_tools_call_auth_error_carries_login_command_and_stage(monkeypatch):
     async def failing_search(arguments):
         raise token_manager.AuthRequiredError("xAI rejected the OAuth refresh credential ('invalid_grant').")
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", failing_search)
+    monkeypatch.setattr(x_search, "_call_x_search_result", failing_search)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 7,
@@ -400,8 +398,8 @@ def _seed_research_setup(monkeypatch, smart_posts):
             warnings=[],
         )
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", fake_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", fake_oembed)
     return calls
 
 
@@ -416,7 +414,7 @@ def test_seed_then_research_runs_smart_stage_and_keeps_evidence(monkeypatch):
     )
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 3,
@@ -469,11 +467,11 @@ def test_exact_only_still_filters_unrelated_posts(monkeypatch):
     async def empty_oembed(status_ids, handles):
         return OEmbedResult(posts=[], warnings=[])
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 4,
@@ -507,14 +505,14 @@ def test_queue_timeout_reports_overloaded_without_escalation(monkeypatch):
         raise AssertionError("upstream must not be called when admission never granted")
 
     monkeypatch.setattr(xai_responses, "post", fake_post)
-    monkeypatch.setattr(x_search.config, "GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(x_search.config, "GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(x_search, "_x_search_semaphore", asyncio.Semaphore(1))
 
     async def scenario():
         saturated = x_search._x_search_semaphore
         await saturated.acquire()  # exhaust capacity so the request can only queue
         try:
-            return await mcp_x_search._handle(
+            return await mcp_tools._handle(
                 {
                     "jsonrpc": "2.0",
                     "id": 5,
@@ -783,11 +781,11 @@ def test_unsupported_reasoning_effort_surfaces_route_warning(monkeypatch):
     async def fake_search(arguments):
         return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments["model"])
 
-    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
-    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+    monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
 
     response = asyncio.run(
-        mcp_x_search._handle(
+        mcp_tools._handle(
             {
                 "jsonrpc": "2.0",
                 "id": 6,

@@ -14,7 +14,7 @@ def _read_default_model(env_overrides: dict[str, str]) -> str:
         env.pop(key, None)
     env.update(env_overrides)
     completed = subprocess.run(
-        [sys.executable, "-c", "import mcp_x_search; print(mcp_x_search.DEFAULT_MODEL)"],
+        [sys.executable, "-c", "import mcp_tools; print(mcp_tools.DEFAULT_MODEL)"],
         cwd=REPO_ROOT,
         env=env,
         check=True,

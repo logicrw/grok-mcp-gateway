@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import mcp_x_search
+from retrieve import x_search
 from retrieve.policy import (
     RequestBudget,
     build_xai_responses_payload,
@@ -37,7 +37,7 @@ def test_xhigh_is_sent_on_grok_46_when_explicit():
     )
     assert payload["reasoning"] == {"effort": "xhigh"}
 
-    production = mcp_x_search._x_search_payload(
+    production = x_search._x_search_payload(
         {
             "query": "claim",
             "model": "grok-4.6",

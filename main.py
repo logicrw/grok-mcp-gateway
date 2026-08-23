@@ -245,10 +245,9 @@ def _maybe_inject_auto_x_search(method: str, path: str, body: bytes) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-# xAI surfaces the injected x_search server-side tool as custom_tool_call items
-# under this internal name; only these are stripped so client-owned tool calls
-# in the same response survive.
-_X_SEARCH_INTERNAL_TOOL_NAMES = {"x_keyword_search"}
+def _x_search_internal_tool_names() -> set[str]:
+    """Names xAI uses for the injected x_search tool; configurable for renames."""
+    return set(config.GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES)
 
 # SSE event separators per the spec: blank line made of CRLF, LF, or CR.
 _SSE_EVENT_SEPARATOR = re.compile(r"\r\n\r\n|\n\n|\r\r")
@@ -262,7 +261,7 @@ def _is_auto_x_search_artifact(item: object) -> bool:
     item_type = item.get("type")
     if item_type in {"x_search", "x_search_call"}:
         return True
-    return item_type == "custom_tool_call" and item.get("name") in _X_SEARCH_INTERNAL_TOOL_NAMES
+    return item_type == "custom_tool_call" and item.get("name") in _x_search_internal_tool_names()
 
 
 def _strip_auto_x_search_response_fields(response: dict) -> bool:

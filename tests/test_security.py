@@ -10,7 +10,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -159,7 +158,7 @@ def test_preflight_stops_when_oauth_state_unavailable(monkeypatch):
         asyncio.run(main._preflight_startup())
 
 
-def test_health_reports_expired_oauth_without_secondary_auth(monkeypatch):
+def test_health_reports_expired_oauth_without_secondary_auth(monkeypatch, loopback_client):
     async def fake_read_local_state():
         return {
             "access_token": _unsigned_jwt({"exp": 1}),
@@ -168,7 +167,7 @@ def test_health_reports_expired_oauth_without_secondary_auth(monkeypatch):
 
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.get("/health")
 
     assert response.status_code == 503
@@ -447,21 +446,21 @@ def test_legacy_source_tree_token_state_is_removed_after_migration(tmp_path, mon
     assert not legacy_state.exists()
 
 
-def test_health_and_metrics_require_proxy_auth_when_configured(monkeypatch):
+def test_health_and_metrics_require_proxy_auth_when_configured(monkeypatch, loopback_client):
     async def fake_read_local_state():
         return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
 
     monkeypatch.setattr(main.config, "PROXY_API_KEY", "secret")
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         assert client.get("/health").status_code == 401
         assert client.get("/metrics").status_code == 401
         assert client.get("/health", headers={"Authorization": "Bearer secret"}).status_code == 200
         assert client.get("/metrics", headers={"X-Proxy-Api-Key": "secret"}).status_code == 200
 
 
-def test_health_reports_expired_token_state(monkeypatch):
+def test_health_reports_expired_token_state(monkeypatch, loopback_client):
     expired = _unsigned_jwt({"exp": 1})
 
     async def fake_read_local_state():
@@ -470,7 +469,7 @@ def test_health_reports_expired_token_state(monkeypatch):
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.get("/health")
 
     assert response.status_code == 503
@@ -478,7 +477,7 @@ def test_health_reports_expired_token_state(monkeypatch):
     assert "token expired" in response.json()["detail"]
 
 
-def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch):
+def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch, loopback_client):
     async def fake_preflight_startup():
         return None
 
@@ -489,7 +488,7 @@ def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.get("/health")
 
     payload = response.json()
@@ -498,14 +497,14 @@ def test_health_reports_mcp_tool_status_when_token_state_unavailable(monkeypatch
     assert payload["mcp"]["enabled_tools"] == ["x_retrieve"]
 
 
-def test_health_reports_mcp_tool_status(monkeypatch):
+def test_health_reports_mcp_tool_status(monkeypatch, loopback_client):
     async def fake_read_local_state():
         return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
 
     monkeypatch.setattr(main.config, "PROXY_API_KEY", None)
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.get("/health")
 
     payload = response.json()
@@ -517,7 +516,7 @@ def test_health_reports_mcp_tool_status(monkeypatch):
     assert payload["mcp"]["models"]["raw"]["listing"] == "unknown"
 
 
-def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeypatch):
+def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeypatch, loopback_client):
     async def fake_read_local_state():
         return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
 
@@ -537,7 +536,7 @@ def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeyp
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
     monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_auth_headers)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         monkeypatch.setattr(main, "httpx_client", FakeClient())
         response = client.get("/health?deep=1")
 
@@ -548,13 +547,13 @@ def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeyp
     assert "entitlement" not in payload["mcp"]["models"]["raw"]
 
 
-def test_http_mcp_lists_x_retrieve_tool(monkeypatch):
+def test_http_mcp_lists_x_retrieve_tool(monkeypatch, loopback_client):
     async def fake_preflight_startup():
         return None
 
     monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
@@ -564,13 +563,13 @@ def test_http_mcp_lists_x_retrieve_tool(monkeypatch):
     assert response.json()["result"]["tools"][0]["name"] == "x_retrieve"
 
 
-def test_http_mcp_notifications_return_accepted(monkeypatch):
+def test_http_mcp_notifications_return_accepted(monkeypatch, loopback_client):
     async def fake_preflight_startup():
         return None
 
     monkeypatch.setattr(main, "_preflight_startup", fake_preflight_startup)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
@@ -579,7 +578,7 @@ def test_http_mcp_notifications_return_accepted(monkeypatch):
     assert response.status_code == 202
 
 
-def test_catchall_token_resolution_failure_is_sanitized(monkeypatch):
+def test_catchall_token_resolution_failure_is_sanitized(monkeypatch, loopback_client):
     async def fake_read_local_state():
         return {"access_token": "not-a-jwt", "token_endpoint": "https://auth.x.ai/oauth2/token"}
 
@@ -590,7 +589,7 @@ def test_catchall_token_resolution_failure_is_sanitized(monkeypatch):
     monkeypatch.setattr(main.token_manager, "read_local_state", fake_read_local_state)
     monkeypatch.setattr(main.token_manager, "get_auth_headers", fake_get_auth_headers)
 
-    with TestClient(main.app, base_url="http://127.0.0.1") as client:
+    with loopback_client() as client:
         response = client.get("/v1/models")
 
     assert response.status_code == 503

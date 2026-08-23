@@ -10,7 +10,7 @@ import httpx
 
 import xai_responses
 from retrieve.metrics import record_error, record_stage, record_timeout, record_usage
-from retrieve.policy import RequestBudget, model_supports_reasoning_effort
+from retrieve.policy import RequestBudget, model_supports_reasoning_effort, model_supports_structured_output
 
 SearchCaller = Callable[[Dict[str, Any]], Awaitable[xai_responses.ResponsesResult]]
 
@@ -49,6 +49,10 @@ async def run_search_stage(
         stage_arguments.pop("_reasoning_effort", None)
     else:
         stage_arguments["_reasoning_effort"] = effective_effort
+    if stage_arguments.get("_structured_output") and not model_supports_structured_output(model):
+        # Unknown model + strict json_schema is a likely upstream 400; the plan
+        # already surfaced this downgrade as a route warning.
+        stage_arguments.pop("_structured_output", None)
 
     timeout = budget.stage_timeout(stage_seconds)
     if timeout <= 0:

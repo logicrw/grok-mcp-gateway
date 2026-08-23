@@ -48,6 +48,7 @@ from retrieve.schema import (
     SOURCE_LIMIT,
 )
 from retrieve.stages import SearchCaller, StageOverloaded, run_search_stage
+from retrieve import x_search
 from x_oembed import OEMBED_TIMEOUT_SECONDS, fetch_oembed_posts
 
 _quality_gate_counts: defaultdict[str, int] = defaultdict(int)
@@ -111,99 +112,19 @@ async def _run_target_pipeline(
             _record_quality(payload, metadata)
             return payload
 
-        # Missing targets fallback (Fast Lane first unless explicit model)
-        fallback_plan = resolve_target_fallback_plan(smart=False, objective=plan.objective_mode)
-        fallback_arguments = dict(search_arguments)
         explicit_model = metadata.get("explicit_model")
-        model = explicit_model or fallback_plan.model
-        fallback_arguments["model"] = model
-        fallback_arguments["query"] = target_fallback_query(missing_ids, metadata)
-        fallback_arguments["_max_turns"] = fallback_plan.max_turns
-        fallback_arguments["_structured_output"] = True
-        fallback_arguments.pop("from_date", None)
-        fallback_arguments.pop("to_date", None)
-
         stage_name = "target_fallback" if explicit_model else "target_fast_fallback"
-        fallback_overloaded = False
+        # One admission permit covers the Fast fallback, its Smart escalation,
+        # and any later generative stage of this request.
         try:
-            fallback_result = await run_search_stage(
-                search,
-                fallback_arguments,
-                stage=stage_name,
-                budget=budget,
-                reasoning_effort=fallback_plan.reasoning_effort,
-                stage_seconds=fallback_plan.stage_timeout_seconds,
-            )
+            async with x_search.request_admission():
+                await _run_exact_target_fallback(
+                    payload, search_arguments, metadata, plan, search, budget, missing_ids
+                )
         except StageOverloaded as exc:
-            fallback_overloaded = True
-            payload["warnings"].append(f"target fallback overloaded: {sanitize_text(exc)}")
-            payload["retrieval_stages"].append(
-                {
-                    "name": stage_name,
-                    "target_status_ids": missing_ids,
-                    "model": fallback_arguments.get("model") or "unknown",
-                    "status": "overloaded",
-                    "reason": "search_admission_queue_timeout",
-                }
-            )
-        except Exception as exc:
-            payload["warnings"].append(f"target fallback failed: {sanitize_text(exc)}")
-            payload["retrieval_stages"].append(
-                {
-                    "name": stage_name,
-                    "target_status_ids": missing_ids,
-                    "model": fallback_arguments.get("model") or "unknown",
-                    "status": "failed",
-                }
-            )
-
-        else:
-            fallback_payload = assemble_payload(fallback_result, metadata, stage_name=stage_name)
-            fallback_payload["retrieval_stages"][0]["target_status_ids"] = missing_ids
-            merge_stage_payload(payload, fallback_payload)
-
-        # Quality check: if still missing and budget allows, escalate to Smart fallback.
-        # Capacity exhaustion is never a reason to enqueue more work.
-        still_missing = target_status_ids_needing_text(payload, metadata)
-        quality = _record_quality(payload, metadata)
-        if (
-            still_missing
-            and not fallback_overloaded
-            and should_escalate_to_smart(fallback_plan, quality, remaining_seconds=budget.remaining())
-        ):
-            record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
-            smart_plan = resolve_target_fallback_plan(smart=True, objective=plan.objective_mode)
-            smart_arguments = dict(search_arguments)
-            smart_arguments["model"] = smart_plan.model
-            smart_arguments["query"] = target_fallback_query(still_missing, metadata)
-            smart_arguments["_max_turns"] = smart_plan.max_turns
-            smart_arguments["_structured_output"] = True
-            smart_arguments.pop("from_date", None)
-            smart_arguments.pop("to_date", None)
-            try:
-                smart_result = await run_search_stage(
-                    search,
-                    smart_arguments,
-                    stage="target_smart_fallback",
-                    budget=budget,
-                    reasoning_effort=smart_plan.reasoning_effort,
-                    stage_seconds=smart_plan.stage_timeout_seconds,
-                )
-            except Exception as exc:
-                payload["warnings"].append(f"smart target fallback failed: {sanitize_text(exc)}")
-                payload["retrieval_stages"].append(
-                    {
-                        "name": "target_smart_fallback",
-                        "target_status_ids": still_missing,
-                        "model": smart_arguments.get("model") or "unknown",
-                        "status": "failed",
-                    }
-                )
-            else:
-                smart_payload = assemble_payload(smart_result, metadata, stage_name="target_smart_fallback")
-                smart_payload["retrieval_stages"][0]["target_status_ids"] = still_missing
-                merge_stage_payload(payload, smart_payload)
-
+            fallback_model = str(explicit_model or get_routing_config().fast_model)
+            _append_overloaded_stage(payload, stage_name, fallback_model, exc)
+            _record_quality(payload, metadata)
         return payload
 
     # seed_then_research: Seed was fetched from oEmbed, now research with Smart model.
@@ -211,51 +132,143 @@ async def _run_target_pipeline(
     # fall back to the Smart lane's model/turns/deadline for the research stage.
     routing_config = get_routing_config()
     research_arguments = dict(search_arguments)
-    research_arguments["model"] = plan.model or routing_config.smart_model
+    research_model = plan.model or routing_config.smart_model
+    research_arguments["model"] = research_model
     research_arguments["_max_turns"] = plan.max_turns or routing_config.smart_max_turns
     research_arguments["_structured_output"] = True
     if plan.reasoning_effort:
         research_arguments["_reasoning_effort"] = plan.reasoning_effort
     research_stage_seconds = plan.stage_timeout_seconds or routing_config.smart_stage_timeout_seconds
 
-    research_overloaded = False
     try:
-        research_result = await run_search_stage(
-            search,
-            research_arguments,
-            stage="smart_extract",
-            budget=budget,
-            reasoning_effort=plan.reasoning_effort,
-            stage_seconds=research_stage_seconds,
-        )
+        async with x_search.request_admission():
+            try:
+                research_result = await run_search_stage(
+                    search,
+                    research_arguments,
+                    stage="smart_extract",
+                    budget=budget,
+                    reasoning_effort=plan.reasoning_effort,
+                    stage_seconds=research_stage_seconds,
+                )
+            except Exception as exc:
+                payload["warnings"].append(f"smart extract failed: {sanitize_text(exc)}")
+                payload["retrieval_stages"].append(
+                    {
+                        "name": "smart_extract",
+                        "model": research_arguments.get("model") or "unknown",
+                        "status": "failed",
+                    }
+                )
+            else:
+                research_payload = assemble_payload(research_result, metadata, stage_name="smart_extract")
+                merge_stage_payload(payload, research_payload)
+
+            _record_quality(payload, metadata)
+            await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
     except StageOverloaded as exc:
-        research_overloaded = True
-        payload["warnings"].append(f"smart research overloaded: {sanitize_text(exc)}")
-        payload["retrieval_stages"].append(
-            {
-                "name": "smart_extract",
-                "model": research_arguments.get("model") or "unknown",
-                "status": "overloaded",
-                "reason": "search_admission_queue_timeout",
-            }
+        # Capacity exhaustion: report overload; never enqueue raw expansion.
+        _append_overloaded_stage(payload, "smart_extract", research_model, exc)
+        _record_quality(payload, metadata)
+    return payload
+
+
+def _append_overloaded_stage(
+    payload: Dict[str, Any], stage_name: str, model: str, exc: StageOverloaded
+) -> None:
+    payload["warnings"].append(f"{stage_name} overloaded: {sanitize_text(exc)}")
+    payload["retrieval_stages"].append(
+        {
+            "name": stage_name,
+            "model": model or "unknown",
+            "status": "overloaded",
+            "reason": "search_admission_queue_timeout",
+        }
+    )
+
+
+async def _run_exact_target_fallback(
+    payload: Dict[str, Any],
+    search_arguments: Dict[str, Any],
+    metadata: Dict[str, Any],
+    plan: RetrievalPlan,
+    search: SearchCaller,
+    budget: RequestBudget,
+    missing_ids: list[str],
+) -> None:
+    # Missing targets fallback (Fast Lane first unless explicit model)
+    fallback_plan = resolve_target_fallback_plan(smart=False, objective=plan.objective_mode)
+    fallback_arguments = dict(search_arguments)
+    explicit_model = metadata.get("explicit_model")
+    model = explicit_model or fallback_plan.model
+    fallback_arguments["model"] = model
+    fallback_arguments["query"] = target_fallback_query(missing_ids, metadata)
+    fallback_arguments["_max_turns"] = fallback_plan.max_turns
+    fallback_arguments["_structured_output"] = True
+    fallback_arguments.pop("from_date", None)
+    fallback_arguments.pop("to_date", None)
+
+    stage_name = "target_fallback" if explicit_model else "target_fast_fallback"
+    try:
+        fallback_result = await run_search_stage(
+            search,
+            fallback_arguments,
+            stage=stage_name,
+            budget=budget,
+            reasoning_effort=fallback_plan.reasoning_effort,
+            stage_seconds=fallback_plan.stage_timeout_seconds,
         )
     except Exception as exc:
-        payload["warnings"].append(f"smart extract failed: {sanitize_text(exc)}")
+        payload["warnings"].append(f"target fallback failed: {sanitize_text(exc)}")
         payload["retrieval_stages"].append(
             {
-                "name": "smart_extract",
-                "model": research_arguments.get("model") or "unknown",
+                "name": stage_name,
+                "target_status_ids": missing_ids,
+                "model": fallback_arguments.get("model") or "unknown",
                 "status": "failed",
             }
         )
     else:
-        research_payload = assemble_payload(research_result, metadata, stage_name="smart_extract")
-        merge_stage_payload(payload, research_payload)
+        fallback_payload = assemble_payload(fallback_result, metadata, stage_name=stage_name)
+        fallback_payload["retrieval_stages"][0]["target_status_ids"] = missing_ids
+        merge_stage_payload(payload, fallback_payload)
 
-    _record_quality(payload, metadata)
-    if not research_overloaded:
-        await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
-    return payload
+    # Quality check: if still missing and budget allows, escalate to Smart fallback.
+    still_missing = target_status_ids_needing_text(payload, metadata)
+    quality = _record_quality(payload, metadata)
+    if still_missing and should_escalate_to_smart(fallback_plan, quality, remaining_seconds=budget.remaining()):
+        record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
+        smart_plan = resolve_target_fallback_plan(smart=True, objective=plan.objective_mode)
+        smart_arguments = dict(search_arguments)
+        smart_arguments["model"] = smart_plan.model
+        smart_arguments["query"] = target_fallback_query(still_missing, metadata)
+        smart_arguments["_max_turns"] = smart_plan.max_turns
+        smart_arguments["_structured_output"] = True
+        smart_arguments.pop("from_date", None)
+        smart_arguments.pop("to_date", None)
+        try:
+            smart_result = await run_search_stage(
+                search,
+                smart_arguments,
+                stage="target_smart_fallback",
+                budget=budget,
+                reasoning_effort=smart_plan.reasoning_effort,
+                stage_seconds=smart_plan.stage_timeout_seconds,
+            )
+        except Exception as exc:
+            payload["warnings"].append(f"smart target fallback failed: {sanitize_text(exc)}")
+            payload["retrieval_stages"].append(
+                {
+                    "name": "target_smart_fallback",
+                    "target_status_ids": still_missing,
+                    "model": smart_arguments.get("model") or "unknown",
+                    "status": "failed",
+                }
+            )
+        else:
+            smart_payload = assemble_payload(smart_result, metadata, stage_name="target_smart_fallback")
+            smart_payload["retrieval_stages"][0]["target_status_ids"] = still_missing
+            merge_stage_payload(payload, smart_payload)
 
 
 async def _run_general_pipeline(
@@ -266,6 +279,35 @@ async def _run_general_pipeline(
     budget: RequestBudget,
 ) -> Dict[str, Any]:
     stage_name = _general_stage_name(plan)
+    # One admission permit covers the initial lane, Smart escalation, and raw
+    # expansion, so tier transitions never re-queue behind the semaphore.
+    try:
+        async with x_search.request_admission():
+            return await _run_general_stages(search_arguments, metadata, plan, search, budget, stage_name)
+    except StageOverloaded as exc:
+        # Capacity exhaustion: report overload, never escalate or enqueue more stages.
+        payload = _failed_stage_payload(
+            metadata,
+            stage_name=stage_name,
+            model=str(plan.model),
+            error_text=sanitize_text(exc),
+        )
+        payload["retrieval_stages"][0]["status"] = "overloaded"
+        payload["retrieval_stages"][0]["reason"] = "search_admission_queue_timeout"
+        if payload["warnings"]:
+            payload["warnings"][-1] = f"{stage_name} overloaded: {sanitize_text(exc)}"
+        _record_quality(payload, metadata)
+        return payload
+
+
+async def _run_general_stages(
+    search_arguments: Dict[str, Any],
+    metadata: Dict[str, Any],
+    plan: RetrievalPlan,
+    search: SearchCaller,
+    budget: RequestBudget,
+    stage_name: str,
+) -> Dict[str, Any]:
     stage_arguments = dict(search_arguments)
     stage_arguments["model"] = plan.model
     stage_arguments["_max_turns"] = plan.max_turns
@@ -282,20 +324,6 @@ async def _run_general_pipeline(
             reasoning_effort=plan.reasoning_effort,
             stage_seconds=plan.stage_timeout_seconds,
         )
-    except StageOverloaded as exc:
-        # Capacity exhaustion: report overload, never escalate or enqueue more stages.
-        payload = _failed_stage_payload(
-            metadata,
-            stage_name=stage_name,
-            model=str(plan.model),
-            error_text=sanitize_text(exc),
-        )
-        payload["retrieval_stages"][0]["status"] = "overloaded"
-        payload["retrieval_stages"][0]["reason"] = "search_admission_queue_timeout"
-        if payload["warnings"]:
-            payload["warnings"][-1] = f"{stage_name} overloaded: {sanitize_text(exc)}"
-        _record_quality(payload, metadata)
-        return payload
     except Exception as exc:
         if plan.initial_lane != "fast":
             raise

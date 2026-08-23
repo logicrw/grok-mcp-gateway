@@ -99,16 +99,27 @@ GROK_PROXY_X_SEARCH_ALLOWED_HANDLES: list[str] = _env_csv("GROK_PROXY_X_SEARCH_A
 GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING: bool = _env_bool("GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING", False)
 GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING: bool = _env_bool("GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING", False)
 
-# Resident MCP clients can share one proxy process. Keep x_search calls bounded
+# Resident MCP clients can share one proxy process. Keep retrieve calls bounded
 # so several local agents cannot stampede the upstream account at once.
 GROK_GATEWAY_MCP_TOOL_ALLOWLIST: list[str] = [
     item.lower() for item in _env_csv("GROK_GATEWAY_MCP_TOOL_ALLOWLIST", ["x_retrieve"])
 ]
-GROK_PROXY_MCP_X_SEARCH_CONCURRENCY: int = _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1)
-# Waiting longer than this for the search semaphore is treated as overload, not
-# as a model-quality failure, and never triggers tier escalation.
-GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS: float = _env_float(
-    "GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS", 30.0, minimum=1.0, maximum=300.0
+# Canonical name is GROK_PROXY_RETRIEVE_CONCURRENCY; the old x_search-era name
+# is still honored when the new variable is unset.
+GROK_PROXY_RETRIEVE_CONCURRENCY: int = _env_int(
+    "GROK_PROXY_RETRIEVE_CONCURRENCY",
+    _env_int("GROK_PROXY_MCP_X_SEARCH_CONCURRENCY", 3, minimum=1),
+    minimum=1,
+)
+# Waiting longer than this for the retrieve admission semaphore is treated as
+# overload, not as a model-quality failure, and never triggers tier escalation.
+GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS", 30.0, minimum=1.0, maximum=300.0
+)
+# xAI surfaces the injected x_search server-side tool under these internal
+# names; only these artifacts are stripped from auto-x_search responses.
+GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES: list[str] = _env_csv(
+    "GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES", ["x_keyword_search"]
 )
 GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS: bool = _env_bool("GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS", False)
 

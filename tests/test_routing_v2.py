@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import mcp_x_search
+from retrieve import x_search
 import token_manager
 import xai_responses
 from retrieve.policy import (
@@ -166,7 +166,7 @@ class RoutingV2Tests(unittest.TestCase):
         )
         tool = {"type": "x_search", "allowed_x_handles": ["logicrw"]}
         from_plan = build_responses_payload(query="latest posts", x_search_tool=tool, plan=plan)
-        production = mcp_x_search._x_search_payload(
+        production = x_search._x_search_payload(
             {
                 "query": "latest posts",
                 "model": plan.model,
@@ -192,7 +192,7 @@ class RoutingV2Tests(unittest.TestCase):
             x_search_tool={"type": "x_search"},
             plan=plan,
         )
-        production = mcp_x_search._x_search_payload(
+        production = x_search._x_search_payload(
             {
                 "query": "claim",
                 "model": plan.model,
@@ -206,7 +206,7 @@ class RoutingV2Tests(unittest.TestCase):
 
     def test_raw_expansion_payload_omits_schema_reasoning_and_max_turns(self) -> None:
         query = "cold topic"
-        production = mcp_x_search._x_search_payload({"query": query, "model": RAW_MODEL})
+        production = x_search._x_search_payload({"query": query, "model": RAW_MODEL})
         expected = build_xai_responses_payload(
             query=query,
             x_search_tool={"type": "x_search"},
@@ -244,7 +244,7 @@ class RoutingV2Tests(unittest.TestCase):
             )
             tool = {"type": "x_search", "allowed_x_handles": ["logicrw"]}
             asyncio.run(
-                mcp_x_search._call_x_search_result(
+                x_search._call_x_search_result(
                     {
                         "query": "latest posts",
                         "model": plan.model,

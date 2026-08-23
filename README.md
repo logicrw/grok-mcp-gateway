@@ -201,7 +201,9 @@ print(response.choices[0].message.content)
 | `to_date` | string | Optional | Search end date (ISO8601, e.g. `2026-08-15`). |
 | `count` | integer | Optional | Target number of posts (default `10`, max `20`). |
 | `sort` | string | Optional | `latest` or `relevance` (default `relevance` for queries, `latest` for handles). |
+| `best_effort_filters` | object | Optional | Engagement filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. |
 | `quality` | object | Optional | Custom quality thresholds: `min_items`, `require_status_url`, `require_original_text`. |
+| `_reasoning_effort` | string | Optional | Explicit reasoning effort: `low`, `medium`, `high`, `xhigh` (forwarded on grok-4.6). |
 | `model_policy` | string | Optional | `auto`, `stable_only`, or `raw_expanded`. |
 | `model` | string | Optional | Explicit model override (e.g. `grok-4.6`, `grok-4.5`). |
 
@@ -213,8 +215,20 @@ print(response.choices[0].message.content)
   *(Routes to Smart Lane with Grok 4.6 + medium reasoning)*
 - **Tweet URL inspection**: `{"query": "https://x.com/xai/status/2087630662631100586"}`  
   *(Routes to Deterministic oEmbed: 0 model calls, instant return)*
-- **Fact verification**: `{"query": "Did xAI announce Grok 4.6 release on August 12?", "intent": "verify_claim"}`  
-  *(Routes to Smart Lane with high reasoning effort)*
+- **Fact verification**: `{"query": "Did xAI announce Grok 4.6 release on August 12?", "intent": "verify_claim", "_reasoning_effort": "high"}`  
+  *(Routes to Smart Lane with high/xhigh reasoning effort)*
+
+### Agent Self-Healing Authentication
+
+When credentials expire or re-authentication is required, `x_retrieve` returns an `AUTH_REQUIRED` error containing a pre-formatted, absolute-path login command:
+```text
+AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv/bin/python /path/to/main.py --login` to open browser.
+```
+Downstream autonomous coding agents (Claude Code, Cursor, Antigravity, etc.) can execute this command directly in the local terminal to launch the browser for user approval, and automatically retry the tool call once approved.
+
+### Companion Agent Skill
+
+For high-level research workflows, use the canonical [`x-research-skill`](https://github.com/logicrw/grok-mcp-gateway) installed at `~/.agents/skills/x-research-skill/SKILL.md` to automatically orchestrate query decomposition, primary source cross-verification, and claim synthesis.
 
 ---
 
@@ -235,13 +249,16 @@ All gateway settings can be customized via environment variables or `.env`:
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Maximum tool iterations for Fast Lane. |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Maximum tool iterations for Smart Lane. |
 | `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` | `3` | Concurrency semaphore limit for upstream xAI calls. |
+| `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS` | `30.0` | Queue timeout before marking stage as overloaded. |
+| `GROK_PROXY_ALLOWED_ORIGINS` | `""` | Comma-separated browser Origin whitelist (for local web apps). |
 
 ---
 
 ## Security & Privacy
 
 - **Zero Content Logging**: The gateway never writes prompts, post bodies, user queries, or auth tokens to disk logs or Prometheus metrics.
-- **Strict File Permissions**: OAuth token storage (`~/.local/state/grok-oauth-proxy/`) enforces POSIX `0700` directory and `0600` file permissions.
+- **Strict File Permissions & File Locking**: OAuth token storage (`~/.local/state/grok-oauth-proxy/`) enforces POSIX `0700` directory and `0600` file permissions with inter-process `flock` and atomic writes.
+- **DNS Rebinding & Origin Protection**: Loopback binding strictly enforces Host whitelisting (`127.0.0.1`, `localhost`, `::1`) and rejects unauthorized browser `Origin` requests.
 - **Isolated Token State**: The gateway maintains its own refreshed credentials and never mutates client configuration files.
 
 ---

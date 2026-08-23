@@ -58,16 +58,6 @@ def metrics_lines() -> list[str]:
     return x_search.metrics_lines()
 
 
-def _search_caller():
-    """Use mcp_x_search._call_x_search_result when tests patch that module."""
-    import sys
-
-    facade = sys.modules.get("mcp_x_search")
-    if facade is not None:
-        return facade._call_x_search_result
-    return x_search._call_x_search_result
-
-
 async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     start = time.monotonic()
     x_search._x_search_active += 1
@@ -83,7 +73,8 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
             retrieve_arguments["model"] = requested_model
         else:
             retrieve_arguments.pop("model", None)
-        result = await pipeline.call_retrieve(retrieve_arguments, search=_search_caller())
+        # Attribute resolved at call time so tests can patch retrieve.x_search.
+        result = await pipeline.call_retrieve(retrieve_arguments, search=x_search._call_x_search_result)
         x_search._record_x_search("success", time.monotonic() - start)
         return result
     except Exception:
