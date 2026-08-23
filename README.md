@@ -53,7 +53,7 @@ Instead of naively forwarding every query to expensive reasoning models, the gat
    - Built on xAI's non-thinking engine: **1–3s instant response**, 1M context window, and zero reasoning delay.
 3. **Smart Lane (`grok-4.6` Flagship)**:
    - Dedicated engine for complex semantic research, source discovery, reaction tracking, and claim verification.
-   - Dynamically mounts validated reasoning effort (`low`, `medium`, `high`) and multi-turn agentic `x_search`. `xhigh` is not sent.
+   - Dynamically mounts validated reasoning effort (`low`, `medium`, `high`, `xhigh`) and multi-turn agentic `x_search`. Daily Smart retrieval defaults to `medium`; `verify_claim` defaults to `high`. Explicit `_reasoning_effort=xhigh` is forwarded on grok-4.6.
 4. **Raw Expansion Lane (`grok-composer-2.5-fast`)**:
    - High-throughput candidate extraction fallback for cold or scarce topics, strictly sanitized by deterministic regex parsers and URL whitelists before entering results.
 

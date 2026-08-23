@@ -26,7 +26,17 @@ def tool_enabled(tool_name: str) -> bool:
 
 
 def tool_definitions() -> list[Dict[str, Any]]:
+    from token_manager import login_command
+
+    command = login_command()
     definitions = [retrieve_tool_definition(DEFAULT_MODEL)]
+    for definition in definitions:
+        definition["description"] = (
+            str(definition.get("description") or "").rstrip()
+            + f" If AUTH_REQUIRED appears, run `{command}` in a terminal to open a browser "
+            "for the user to authorize, then retry this tool. "
+            "若遇到 AUTH_REQUIRED 错误，Agent 可在终端直接执行该登录命令唤起浏览器供用户授权，授权成功后自动重试本工具。"
+        )
     return [definition for definition in definitions if tool_enabled(str(definition["name"]))]
 
 

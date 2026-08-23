@@ -37,7 +37,7 @@ The v2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
 
 3. **Smart Lane (`grok-4.6` default, `grok-4.5` fallback compatibility)**:
    - Default stable lane for complex semantic research, source discovery, reaction tracking, and claim verification.
-   - Supports validated `reasoning.effort` (`low`, `medium`, `high`) on capable models. `xhigh` is not in the capability table and is dropped if a caller passes it.
+   - Supports validated `reasoning.effort` (`low`, `medium`, `high`, `xhigh`) on grok-4.6. Daily Smart objectives default to `medium`; `verify_claim` defaults to `high`. Explicit `xhigh` is forwarded. grok-4.5 remains `low`/`medium`/`high`.
    - Receives automatic escalations from Fast Lane when Fast Lane results fail quality gates and remaining budget >= 35s.
 
 4. **Raw Expansion Lane (`grok-composer-2.5-fast`)**:

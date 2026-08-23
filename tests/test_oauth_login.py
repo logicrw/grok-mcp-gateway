@@ -273,8 +273,37 @@ def test_read_local_state_never_implicitly_bootstraps_from_hermes(tmp_path, monk
     monkeypatch.setattr(token_manager, "LEGACY_LOCAL_AUTH_PATH", legacy_state)
     monkeypatch.setattr(token_manager, "load_from_hermes", should_not_be_called)
 
-    with pytest.raises(token_manager.AuthRequiredError, match="--login"):
+    with pytest.raises(token_manager.AuthRequiredError, match="AUTH_REQUIRED"):
         asyncio.run(token_manager.read_local_state())
+
+
+def test_login_command_uses_absolute_interpreter_and_main():
+    command = token_manager.login_command()
+    assert sys.executable in command
+    assert str(Path(token_manager.__file__).resolve().with_name("main.py")) in command
+    assert command.endswith("--login")
+
+
+def test_auth_required_error_embeds_login_command():
+    exc = token_manager.AuthRequiredError("missing credentials")
+    assert "AUTH_REQUIRED" in str(exc)
+    assert exc.login_command in str(exc)
+    assert "自动重试本工具" in str(exc)
+
+
+def test_tool_definition_and_error_payload_include_login_command():
+    import mcp_tools
+    from retrieve.pipeline import error_result
+
+    command = token_manager.login_command()
+    tools = mcp_tools.tool_definitions()
+    assert tools
+    assert "AUTH_REQUIRED" in tools[0]["description"]
+    assert command in tools[0]["description"]
+
+    payload = error_result({"query": "latest xAI posts"}, str(token_manager.AuthRequiredError("missing")))
+    assert payload["structuredContent"]["auth_login_command"] == command
+    assert payload["isError"] is True
 
 
 def test_runtime_config_does_not_expose_hermes_poll_interval():

@@ -17,7 +17,7 @@ ObjectiveMode = Literal[
 ]
 TargetStrategy = Literal["none", "exact_only", "seed_then_research"]
 ExecutionLane = Literal["deterministic", "fast", "smart", "custom"]
-ReasoningEffort = Literal["low", "medium", "high"]
+ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
 @dataclass(frozen=True)
@@ -91,11 +91,11 @@ DEFAULT_CAPABILITIES: Dict[str, ModelCapabilities] = {
         structured_outputs=True,
     ),
     "grok-4.6": ModelCapabilities(
-        reasoning_efforts=frozenset({"low", "medium", "high"}),
+        reasoning_efforts=frozenset({"low", "medium", "high", "xhigh"}),
         structured_outputs=True,
     ),
     "grok-4.6-latest": ModelCapabilities(
-        reasoning_efforts=frozenset({"low", "medium", "high"}),
+        reasoning_efforts=frozenset({"low", "medium", "high", "xhigh"}),
         structured_outputs=True,
     ),
     "grok-build-latest": ModelCapabilities(

@@ -478,6 +478,10 @@ def error_result(arguments: Dict[str, Any], error_text: str) -> Dict[str, Any]:
         "items": [],
         "groups": {"primary": [], "supporting": [], "reactions": [], "rejected_candidates": []},
     }
+    if "AUTH_REQUIRED" in error_text:
+        from token_manager import login_command
+
+        payload["auth_login_command"] = login_command()
     record_retrieval_status("error")
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"content": [{"type": "text", "text": body}], "structuredContent": payload, "isError": True}

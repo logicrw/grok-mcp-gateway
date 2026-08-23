@@ -12,8 +12,10 @@ import base64
 import json
 import logging
 import os
+import shlex
 import shutil
 import stat
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -29,8 +31,28 @@ from error_sanitizer import sanitize_text
 logger = logging.getLogger(__name__)
 
 
+def login_command() -> str:
+    """Return an absolute interpreter + main.py --login invocation."""
+    main_py = Path(__file__).resolve().with_name("main.py")
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(main_py))} --login"
+
+
+AUTH_REQUIRED_HINT = (
+    "If you are an Agent, execute that command in the terminal to open a browser "
+    "for the user to authorize, then retry this tool. "
+    "若遇到 AUTH_REQUIRED 错误，Agent 可在终端直接执行该登录命令唤起浏览器供用户授权，授权成功后自动重试本工具。"
+)
+
+
 class AuthRequiredError(RuntimeError):
     """Raised when no usable gateway-local OAuth credential is available."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        self.login_command = login_command()
+        super().__init__(
+            f"AUTH_REQUIRED: {detail} Run {self.login_command} to open a browser login. {AUTH_REQUIRED_HINT}"
+        )
 
 HERMES_AUTH_PATH = config.HERMES_AUTH_PATH
 _STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
@@ -361,15 +383,9 @@ async def read_local_state() -> Dict[str, Any]:
             except OSError:
                 logger.warning("Migrated token state but could not remove legacy source-tree token file.")
     if not data or not data.get("access_token"):
-        raise AuthRequiredError(
-            "No local xAI OAuth credentials are available. "
-            "Run 'python main.py --login' or 'python scripts/login_xai_oauth.py'."
-        )
+        raise AuthRequiredError("No local xAI OAuth credentials are available.")
     if not data.get("client_id"):
-        raise AuthRequiredError(
-            "Local xAI OAuth state is missing client_id. "
-            "Run 'python main.py --login' to re-authenticate."
-        )
+        raise AuthRequiredError("Local xAI OAuth state is missing client_id.")
     return data
 
 
@@ -417,9 +433,9 @@ async def refresh_access_token(state: Dict[str, Any]) -> Dict[str, Any]:
     token_endpoint = _validate_token_endpoint(str(state.get("token_endpoint") or XAI_TOKEN_ENDPOINT))
 
     if not refresh_token:
-        raise AuthRequiredError("No refresh_token is available. Run 'python main.py --login'.")
+        raise AuthRequiredError("No refresh_token is available.")
     if not client_id:
-        raise AuthRequiredError("No OAuth client_id is available. Run 'python main.py --login'.")
+        raise AuthRequiredError("No OAuth client_id is available.")
 
     logger.info("Refreshing xAI OAuth token...")
     try:

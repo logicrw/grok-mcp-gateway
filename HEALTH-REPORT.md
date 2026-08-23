@@ -507,8 +507,8 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 
 - **日期**: 2026-08-23
 - **前提**: 网关仅个人及专属 Agent 团队自用，不再为未知第三方保留历史 JSON 别名。
-- **commit**: `53d4e6b`
-- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **193 passed**（第六阶段 189 + Fast 降级 1 + fixture 回放 3；错误 stage 断言改在原测试上）
+- **commit**: `53d4e6b`（stage 名 / Fast 降级 / fixture）；本轮续作见后续 commit
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **197 passed**
 
 ### 实际完成
 
@@ -528,8 +528,19 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
    - `tests/test_xai_fixtures.py`：生产提取器组 `ResponsesResult`，再打 `assemble_payload` / `finalize_payload` / `parse_raw_posts_from_text`。
    - `docs/retrieval-architecture.md` 增加 Fixture refresh 表。不在 CI 打真实 API。
 
+4. **开放 grok-4.6 `xhigh`，默认档位保持经济**
+   - `ReasoningEffort` 含 `xhigh`；`DEFAULT_CAPABILITIES` 仅 `grok-4.6` / `grok-4.6-latest` 接受。
+   - 显式 `_reasoning_effort=xhigh` 经 `build_xai_responses_payload` 透传；grok-4.5 仍丢弃。
+   - 默认：日常 Smart `medium`，`verify_claim` `high`，不默认 `xhigh`。
+
+5. **自愈登录**
+   - `token_manager.login_command()` 输出 `{sys.executable} {abs/main.py} --login`。
+   - `AuthRequiredError` 前缀 `AUTH_REQUIRED:`，正文含绝对路径命令和「授权后重试」中英指引。
+   - `mcp_tools.tool_definitions()` 描述追加同一命令；`error_result` 在 AUTH_REQUIRED 时写入 `auth_login_command`。
+
 ### 仍可后续做、但不挡自用收官
 
 - `mcp_x_search.py` 兼容门面仍在，测试 monkeypatch 还走这个名字。
 - 指标测试仍可以主动 `record_stage(stage="stable_extract")`，那是标签字符串，不是流水线产出。
 - 没有真实 xAI 采样刷新 fixture；三份是按线上形状手写的脱敏样例。
+- 验证：`pytest -q -W error` **197 passed**。

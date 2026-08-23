@@ -3,8 +3,8 @@
 > **Status (2026-08-23):** Historical design packet. Do not implement from this
 > file. Runtime authentication is native PKCE (`oauth_flow.py`,
 > `python main.py --login`); `read_local_state()` does not bootstrap from
-> Hermes. Smart Lane sends `reasoning.effort` of `low` / `medium` / `high`
-> only — `xhigh` was proposed here and is not sent. Current behavior:
+> Hermes. Smart Lane defaults remain `medium` (daily) and `high`
+> (`verify_claim`); grok-4.6 forwards explicit `xhigh`. Current behavior:
 > `docs/retrieval-architecture.md` and `HEALTH-REPORT.md`.
 > Explicit Hermes migration remains `scripts/import_xai_oauth.py` /
 > `token_manager.load_from_hermes`.

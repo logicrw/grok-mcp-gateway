@@ -25,8 +25,8 @@ def test_reasoning_effort_is_only_enabled_for_known_reasoning_models():
     assert model_supports_reasoning_effort("custom-model") is False
 
 
-def test_xhigh_is_not_sent_on_grok_46_or_verify_claim():
-    dropped = build_xai_responses_payload(
+def test_xhigh_is_sent_on_grok_46_when_explicit():
+    payload = build_xai_responses_payload(
         query="claim",
         x_search_tool={"type": "x_search"},
         model="grok-4.6",
@@ -35,16 +35,7 @@ def test_xhigh_is_not_sent_on_grok_46_or_verify_claim():
         structured_output=True,
         reasoning_effort="xhigh",
     )
-    assert "reasoning" not in dropped
-
-    plan = resolve_plan(
-        {
-            "intent": "verify_claim",
-            "mode": "claim_verification",
-            "query": "Did xAI announce Grok 4.6?",
-        }
-    )
-    assert plan.reasoning_effort == "high"
+    assert payload["reasoning"] == {"effort": "xhigh"}
 
     production = mcp_x_search._x_search_payload(
         {
@@ -54,7 +45,35 @@ def test_xhigh_is_not_sent_on_grok_46_or_verify_claim():
             "_reasoning_effort": "xhigh",
         }
     )
-    assert "reasoning" not in production
+    assert production["reasoning"] == {"effort": "xhigh"}
+
+    dropped_on_45 = build_xai_responses_payload(
+        query="claim",
+        x_search_tool={"type": "x_search"},
+        model="grok-4.5",
+        reasoning_effort="xhigh",
+    )
+    assert "reasoning" not in dropped_on_45
+
+
+def test_smart_defaults_are_medium_and_verify_claim_is_high():
+    research = resolve_plan(
+        {
+            "intent": "research",
+            "mode": "semantic_research",
+            "query": "Grok 4.6 architecture",
+        }
+    )
+    assert research.reasoning_effort == "medium"
+
+    verify = resolve_plan(
+        {
+            "intent": "verify_claim",
+            "mode": "claim_verification",
+            "query": "Did xAI announce Grok 4.6?",
+        }
+    )
+    assert verify.reasoning_effort == "high"
 
 
 def test_stage_timeout_wraps_entire_search_call():

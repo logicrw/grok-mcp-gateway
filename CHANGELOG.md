@@ -8,6 +8,10 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 - Add sanitized xAI Responses fixtures under `tests/fixtures/xai/` and replay
   tests for Fast JSON, Smart citations, and non-JSON raw candidate text.
+- Accept `reasoning.effort=xhigh` on grok-4.6 when explicitly requested.
+- Put `AUTH_REQUIRED` plus an absolute `python /path/to/main.py --login`
+  command on AuthRequiredError, `x_retrieve` tool descriptions, and error
+  payloads so an Agent can relaunch browser login and retry.
 
 ### Changed
 
@@ -17,6 +21,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - When Fast Lane fails and remaining budget is below the Smart escalation
   floor, return a `degraded` payload and still attempt raw expansion instead
   of raising a hard MCP error.
+- Keep daily Smart retrieval at `medium` and `verify_claim` at `high`; do not
+  default to `xhigh`.
 
 ## 0.2.0 - 2026-08-23
 
