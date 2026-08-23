@@ -6,6 +6,44 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Security
 
+- Hold one retrieve admission permit per request across all tier transitions
+  (Fast -> Smart -> raw): `request_admission()` queues once per request and
+  stages never re-queue; the admission timeout moved to
+  `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS`.
+- Persist interactive writes (native login, imports) through `save_local_state`
+  under the inter-process flock with a monotonically increasing
+  `state_version`, closing the last writer that could clobber a refresh
+  transaction.
+- Suppress redundant token-endpoint retries for 8 seconds after a transient
+  refresh failure (timeout/429/5xx); credential rejections
+  (`invalid_grant`/`invalid_client`) are never suppressed so self-healing login
+  stays immediate.
+
+### Changed
+
+- Remove the `mcp_x_search.py` compatibility facade: tests and the tool
+  dispatcher now use `mcp_tools`, `retrieve.pipeline`, and `retrieve.x_search`
+  directly; the stdio entrypoint is `python mcp_server.py`.
+- Rename the concurrency setting to `GROK_PROXY_RETRIEVE_CONCURRENCY`
+  (the legacy `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` still applies when the new
+  name is unset).
+- Drop `_structured_output` for models not known to support strict JSON schema
+  output instead of risking an upstream 400, and surface both reasoning-effort
+  and structured-output downgrades as one route warning for custom models.
+- Make the xAI internal tool names used for auto-x_search artifact attribution
+  configurable via `GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES`.
+
+### Added
+
+- Add a real two-subprocess refresh integration test against a one-shot
+  rotating fake OAuth server (flock transaction, single upstream refresh, no
+  rollback) plus negative-cache, versioned-persist, and single-permit tests.
+- Add a `tests/conftest.py` with per-test token-state isolation and a
+  `loopback_client` fixture; document all new environment variables in both
+  READMEs and the routing RFC.
+
+### Security (audit adoption)
+
 - Reject DNS-rebinding and cross-site browser requests on loopback binds via a
   Host allowlist (421) and browser-Origin rejection (403), with
   `GROK_PROXY_ALLOWED_ORIGINS` as the explicit opt-in for local web origins.
@@ -20,7 +58,7 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   JSON return `-32700`/`-32600` errors and the server keeps serving instead of
   dying; notifications never receive responses and `jsonrpc` must be `"2.0"`.
 
-### Fixed
+### Fixed (audit adoption)
 
 - Run the `seed_then_research` Smart stage with real Smart-lane model, turns,
   and deadline instead of an inherited zero-second timeout, and keep the
@@ -29,10 +67,9 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - Classify OAuth `invalid_grant`/`invalid_client` as `AUTH_REQUIRED` with
   `auth_login_command`, `stage="auth_refresh"`, and `retryable=false`; transient
   refresh failures (timeout/429/5xx) no longer mark `reauth_required`.
-- Treat search semaphore queueing as overload (`StageOverloaded`, bounded by
-  `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS`): overloaded stages never
-  escalate to Smart or raw expansion.
-- Auto x_search shim strips only `x_keyword_search`-attributed tool-call items
+- Treat retrieve admission queueing as overload (`StageOverloaded`): overloaded
+  requests never escalate to Smart or raw expansion.
+- Auto x_search shim strips only x_keyword_search-attributed tool-call items
   and events, so client-owned custom tool calls survive; SSE parsing supports
   CRLF/CR separators, chunk boundaries, and a 4 MB per-event buffer cap.
 - Canonicalize source/post/item URL keys (scheme/host case, default ports,
@@ -44,7 +81,7 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 - Close the shared xAI Responses client when a stdio session ends, and recreate
   the refresh single-flight lock per event loop for embedded callers.
 
-### Added
+### Added (audit adoption)
 
 - Add sanitized xAI Responses fixtures under `tests/fixtures/xai/` and replay
   tests for Fast JSON, Smart citations, and non-JSON raw candidate text.

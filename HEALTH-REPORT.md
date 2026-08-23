@@ -602,3 +602,35 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
 - 真实双进程 flock 竞争未做进程级集成测试（单进程内模拟并发写盘 + 采纳/回滚语义已覆盖核心不变量）。
 - `oauth_flow` 登录写入与其他写路径尚未纳入 state_version CAS（交互式低频路径，文档化于此）。
 - 审计矩阵 #8（部分成功后 Smart 429）/#9（重复帖富化）已由既有 0.2.0 测试语义覆盖（Fast 成果保留、`_post_key` status-ID 合并），未重复立项。
+
+## 第九阶段记录（审计后续优化：韧性、准入与结构清偿）
+
+- **日期**: 2026-08-23
+- **输入**: 第八阶段评审后维护者确认的 8 项后续优化（除「明确不建议做」三项外全部实施）。
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **244 passed**（第八阶段 234 + 本阶段 10 新增）。
+
+### 实施明细
+
+1. **刷新失败短负缓存**（`token_manager.py`）：transient 失败（超时/429/5xx）后 8 秒内（`REFRESH_FAILURE_SUPPRESS_SECONDS`）顺序调用方直接收到 `Token refresh failed recently ... suppressed`，不再逐个请求重打 token endpoint；`AuthRequiredError`（invalid_grant 等）**永不抑制**——自愈登录路径每次都能即时探测恢复。成功刷新即清除标记。
+2. **交互式写入纳入锁与版本**：`save_local_state`（native login / 导入脚本的唯一写入通道）现在持有 `_state_file_lock` 并基于磁盘当前 `state_version` 单调递增，登录与后台刷新事务彻底互斥，第八阶段的最后一条事务残留关闭。
+3. **请求级准入许可**（`retrieve/x_search.py` + `pipeline.py`）：`request_admission()` 以 ContextVar 标记请求上下文，pipeline 在生成式段落（general 全段 / exact fallback+smart / seed 研究+raw）外层获取**一个**许可贯穿 Fast→Smart→raw 全部层级转换，阶段不再各自排队；直接调用 `_call_x_search_result` 的路径仍独立准入。排队超时统一在新 `GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS`（原 `GROK_PROXY_MCP_X_SEARCH_QUEUE_TIMEOUT_SECONDS`，未发布即改名）。
+4. **structured_output 能力联动**（`policy.py` + `stages.py`）：`model_supports_structured_output()` 与 effort 校验同构——未知模型携带 strict json_schema 会在 `run_search_stage` 摘除 `_structured_output`（消除上游 400 路径），显式模型的 route_warning 同时列出 effort 与 structured 两项策略漂移。
+5. **拆除 `mcp_x_search.py` 兼容门面**：第七阶段标记的结构残留清偿。`mcp_tools._search_caller()` 的 sys.modules 探测删除，调用点改为调用时解析 `x_search._call_x_search_result`（测试 monkeypatch 面统一为 `retrieve.x_search`）；6 个测试文件 141 处引用全部迁移到真实模块（`mcp_tools._handle` / `pipeline` / `x_search` / `mcp_posts`）；services/install.sh 无依赖，stdio 入口收敛为 `python mcp_server.py`。
+6. **env / 指标命名统一**：`GROK_PROXY_RETRIEVE_CONCURRENCY` 为正名（旧名 `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` 未设置新名时仍生效，README 已注明）；metrics 一致读取新值。
+7. **`x_keyword_search` 内部名可配置**：`GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES`（默认 `x_keyword_search`），xAI 改名时一处可调，auto-x_search 归因过滤不再硬编码。
+8. **测试基建**：`tests/conftest.py` 提供 autouse token 状态重置（负缓存/共享刷新任务跨测试隔离）与 `loopback_client` fixture（9 处 TestClient 收口）；README/README.zh-CN/docs RFC 补齐全部新 env 文档。
+
+### 新增测试
+
+- `tests/test_phase9.py`（9 例）：负缓存抑制/过期重试/invalid_grant 不抑制；save_local_state 版本单调且不回退；三层级单请求恰好一次准入（CountingSemaphore）；未知模型摘除 structured_output、route_warning 含双提示；内部名可配置。
+- `tests/test_multiprocess_refresh.py`（1 例，POSIX only）：**真实双子进程** + 一次性轮换 fake OAuth server —— 断言仅一次上游刷新、落盘 R1、版本递增、无 reauth 回滚。第八阶段记录的「跨进程仅单进程模拟」残留关闭。
+
+### 过程记录
+
+- 删除门面后首次全量跑出现 9 例一次性失败，清理 `__pycache__` 后 13 连绿 + `-W error` 双绿，判定为陈旧字节码 artifact（删除模块 + 旧 pyc 并存的瞬时态），非真实竞态；CI 干净检出无此条件。
+- 队列超时 env 在第八阶段 commit 后、任何发布前完成改名，无兼容负担；并发 env 保留旧名回退。
+
+### 剩余（低优先级，均不阻塞）
+
+- `_x_search_*` 指标前缀与 `_x_search_semaphore` 内部名仍是历史命名（公开 env 已统一，仅内部标识符）。
+- 审计矩阵 #16 的完整 SSE parser fuzz（当前覆盖 LF/CRLF/CR/分块/溢出主路径）。
