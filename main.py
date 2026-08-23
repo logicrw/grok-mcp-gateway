@@ -180,7 +180,7 @@ def _prepare_forward_headers(incoming_headers: Mapping[str, str], auth_headers: 
         forwarded[key] = value
 
     forwarded.update(auth_headers)
-    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.1.0")
+    forwarded.setdefault("user-agent", "grok-mcp-gateway/0.2.0")
     return forwarded
 
 

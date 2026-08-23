@@ -246,17 +246,6 @@ def model_supports_reasoning_effort(model: str) -> bool:
     return bool(caps.reasoning_efforts)
 
 
-def reasoning_effort_for(metadata: Dict[str, Any]) -> str:
-    """Calculate reasoning effort level for backwards compatibility."""
-    if metadata.get("target_status_ids"):
-        return "low"
-    if metadata.get("intent") == "verify_claim":
-        return "high"
-    if metadata.get("mode") in {"latest_by_handle", "structured_posts"}:
-        return "low"
-    return "medium"
-
-
 def resolve_plan(
     metadata: Mapping[str, Any],
     *,

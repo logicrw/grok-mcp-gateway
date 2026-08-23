@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from retrieve.payload import _groups
 from retrieve.text_parser import status_id_from_url
 from x_oembed import OEmbedPost
 
@@ -96,9 +97,3 @@ def _append_source(payload: Dict[str, Any], post: OEmbedPost) -> None:
     ):
         return
     payload["sources"].append({"url": post.url, "title": "X public oEmbed"})
-
-
-def _groups(items: list[Dict[str, Any]]) -> Dict[str, list[Dict[str, Any]]]:
-    primary = [item for item in items if item["relation"] == "primary"]
-    reactions = [item for item in items if item["relation"] == "reaction"]
-    return {"primary": primary, "supporting": [], "reactions": reactions, "rejected_candidates": []}

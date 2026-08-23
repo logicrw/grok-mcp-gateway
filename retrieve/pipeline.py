@@ -99,6 +99,7 @@ async def _run_target_pipeline(
 
     if plan.target_strategy == "exact_only":
         if not missing_ids:
+            _record_quality(payload, metadata)
             return payload
 
         # Missing targets fallback (Fast Lane first unless explicit model)
@@ -141,7 +142,7 @@ async def _run_target_pipeline(
 
         # Quality check: if still missing and budget allows, escalate to Smart fallback
         still_missing = target_status_ids_needing_text(payload, metadata)
-        quality = evaluate_quality(payload, metadata)
+        quality = _record_quality(payload, metadata)
         if still_missing and should_escalate_to_smart(fallback_plan, quality, remaining_seconds=budget.remaining()):
             record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
             smart_plan = resolve_target_fallback_plan(smart=True, objective=plan.objective_mode)
@@ -208,6 +209,7 @@ async def _run_target_pipeline(
         research_payload = assemble_payload(research_result, metadata, stage_name="smart_extract")
         merge_stage_payload(payload, research_payload)
 
+    _record_quality(payload, metadata)
     await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
     return payload
 
@@ -251,8 +253,7 @@ async def _run_general_pipeline(
         raise
 
     payload = assemble_payload(result, metadata, stage_name=stage_name)
-    quality = evaluate_quality(payload, metadata)
-    _quality_gate_counts["pass" if quality.passed else "fail"] += 1
+    quality = _record_quality(payload, metadata)
 
     if not quality.passed and should_escalate_to_smart(plan, quality, remaining_seconds=budget.remaining()):
         record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
@@ -382,6 +383,12 @@ async def _run_public_oembed(payload: Dict[str, Any], metadata: Dict[str, Any], 
         duration_seconds=time.monotonic() - started,
     )
     _append_oembed_stage(payload, status_ids, status, len(result.posts))
+
+
+def _record_quality(payload: Dict[str, Any], metadata: Dict[str, Any]):
+    quality = evaluate_quality(payload, metadata)
+    _quality_gate_counts["pass" if quality.passed else "fail"] += 1
+    return quality
 
 
 def _append_oembed_stage(payload: Dict[str, Any], status_ids: list[str], status: str, items: int) -> None:

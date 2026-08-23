@@ -112,6 +112,23 @@ def test_exact_target_drops_nearby_posts_from_result(monkeypatch):
     assert structured["target_match"]["missing"] == [target]
 
 
+def test_target_pipeline_records_quality_gate_decision(monkeypatch):
+    target = "2071385784154759468"
+    from retrieve.pipeline import _quality_gate_counts
+
+    before = _quality_gate_counts["pass"] + _quality_gate_counts["fail"]
+
+    async def fake_search(arguments):
+        return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments["model"])
+
+    monkeypatch.setattr(mcp_x_search, "_call_x_search_result", fake_search)
+    monkeypatch.setattr(mcp_x_search.mcp_retrieve, "fetch_oembed_posts", _empty_oembed)
+
+    _call({"query": target, "model_policy": "stable_only"})
+
+    assert _quality_gate_counts["pass"] + _quality_gate_counts["fail"] == before + 1
+
+
 def test_exact_target_accepts_trusted_media_suffix(monkeypatch):
     target = "2071385784154759468"
     media_url = f"https://x.com/xai/status/{target}/photo/1"

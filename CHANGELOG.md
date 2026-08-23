@@ -4,6 +4,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-23
+
 ### Added
 
 - Add `x_retrieve.v1` as the single public/default MCP retrieval tool for
@@ -50,6 +52,11 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   registration (`mcp_tools.py`) from xAI x_search I/O (`retrieve/x_search.py`).
   `mcp_x_search.py` remains a compatibility facade. The
   `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` environment variable is unchanged.
+- Read MCP stdio frames through `asyncio.StreamReader` instead of blocking
+  `sys.stdin` iteration.
+- Record quality-gate pass/fail on the exact-target and seed-then-research
+  pipelines, matching the general retrieve path.
+- Bump the package and MCP `serverInfo` version to `0.2.0`.
 - Document Smart Lane reasoning as `low` / `medium` / `high` only. `xhigh` is
   not in the capability table and is not sent on the Responses payload.
 - Remove unused `HERMES_POLL_INTERVAL`. The daemon never polled Hermes
@@ -125,6 +132,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
   `retrieve_payload.merge_stage_payload`.
 - Point README LaunchAgent install instructions at
   `services/service-examples.md` instead of a missing plist file.
+- Remove unused `reasoning_effort_for` and `should_run_raw`; share `_groups`
+  from `retrieve.payload` with the oEmbed merger.
 
 - Preserve the exception type when an upstream timeout has no message, and let
   explicit status-ID retrieval continue to the public oEmbed fallback after a

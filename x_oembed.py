@@ -14,7 +14,7 @@ OEMBED_ENDPOINT: Final = "https://publish.twitter.com/oembed"
 OEMBED_HOSTS: Final = {"publish.twitter.com", "publish.x.com"}
 OEMBED_REDIRECT_LIMIT: Final = 3
 OEMBED_TIMEOUT_SECONDS: Final = 8.0
-USER_AGENT: Final = "grok-mcp-gateway/0.1.0 (+https://github.com/logicrw/grok-mcp-gateway)"
+USER_AGENT: Final = "grok-mcp-gateway/0.2.0 (+https://github.com/logicrw/grok-mcp-gateway)"
 
 
 @dataclass(frozen=True)

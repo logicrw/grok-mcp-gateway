@@ -11,25 +11,10 @@ from retrieve.policy import (
     RequestBudget,
     build_xai_responses_payload,
     model_supports_reasoning_effort,
-    reasoning_effort_for,
     resolve_plan,
 )
 from retrieve.stages import StageTimeout, run_search_stage
 from xai_responses import ResponsesResult
-
-
-@pytest.mark.parametrize(
-    ("metadata", "expected"),
-    [
-        ({"mode": "latest_by_handle", "intent": "auto"}, "low"),
-        ({"mode": "structured_posts", "intent": "posts"}, "low"),
-        ({"mode": "semantic_research", "intent": "research"}, "medium"),
-        ({"mode": "source_discovery", "intent": "verify_claim"}, "high"),
-        ({"mode": "source_discovery", "target_status_ids": ["2071385784154759468"]}, "low"),
-    ],
-)
-def test_reasoning_effort_for_route(metadata, expected):
-    assert reasoning_effort_for(metadata) == expected
 
 
 def test_reasoning_effort_is_only_enabled_for_known_reasoning_models():

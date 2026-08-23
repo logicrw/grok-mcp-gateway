@@ -70,11 +70,6 @@ def raw_decision(payload: Dict[str, Any], metadata: Dict[str, Any]) -> tuple[boo
 
 
 
-def should_run_raw(payload: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
-    run_raw, _reason = raw_decision(payload, metadata)
-    return run_raw
-
-
 def raw_expansion_query(query: str) -> str:
     return (
         query

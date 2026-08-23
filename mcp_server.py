@@ -69,9 +69,21 @@ async def handle(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return _error(request_id, -32601, f"method not found: {method}")
 
 
-async def stdio_main() -> None:
-    for line in sys.stdin:
-        line = line.strip()
+async def stdio_main(
+    reader: Optional[asyncio.StreamReader] = None,
+    writer: Optional[Any] = None,
+) -> None:
+    if reader is None:
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    out = writer if writer is not None else sys.stdout
+    while True:
+        raw = await reader.readline()
+        if not raw:
+            break
+        line = raw.decode("utf-8").strip()
         if not line:
             continue
         try:
@@ -84,8 +96,10 @@ async def stdio_main() -> None:
         except Exception as exc:
             response = _error(None, -32603, sanitize_text(exc))
         if response is not None:
-            sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
-            sys.stdout.flush()
+            out.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
+            flush = getattr(out, "flush", None)
+            if callable(flush):
+                flush()
 
 
 if __name__ == "__main__":
