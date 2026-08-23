@@ -53,7 +53,7 @@ Instead of naively forwarding every query to expensive reasoning models, the gat
    - Built on xAI's non-thinking engine: **1–3s instant response**, 1M context window, and zero reasoning delay.
 3. **Smart Lane (`grok-4.6` Flagship)**:
    - Dedicated engine for complex semantic research, source discovery, reaction tracking, and claim verification.
-   - Dynamically mounts validated reasoning effort (`low`, `medium`, `high`, `xhigh`) and multi-turn agentic `x_search`. Daily Smart retrieval defaults to `medium`; `verify_claim` defaults to `high`. Explicit `_reasoning_effort=xhigh` is forwarded on grok-4.6.
+   - Dynamically mounts validated reasoning effort (`low`, `medium`, `high`, `xhigh`) and multi-turn agentic `x_search`. Effort is selected automatically from the `intent`: daily Smart retrieval defaults to `medium`, `verify_claim` defaults to `high`. There is no public effort parameter on `x_retrieve`.
 4. **Raw Expansion Lane (`grok-composer-2.5-fast`)**:
    - High-throughput candidate extraction fallback for cold or scarce topics, strictly sanitized by deterministic regex parsers and URL whitelists before entering results.
 
@@ -203,9 +203,10 @@ print(response.choices[0].message.content)
 | `sort` | string | Optional | `latest` or `relevance` (default `relevance` for queries, `latest` for handles). |
 | `best_effort_filters` | object | Optional | Engagement filters: `min_likes`, `min_reposts`, `min_replies`, `min_views`. |
 | `quality` | object | Optional | Custom quality thresholds: `min_items`, `require_status_url`, `require_original_text`. |
-| `_reasoning_effort` | string | Optional | Explicit reasoning effort: `low`, `medium`, `high`, `xhigh` (forwarded on grok-4.6). |
 | `model_policy` | string | Optional | `auto`, `stable_only`, or `raw_expanded`. |
 | `model` | string | Optional | Explicit model override (e.g. `grok-4.6`, `grok-4.5`). |
+| `force_refresh` | boolean | Optional | Bypass the local response cache and force an upstream retrieval (v0.3.0). Reasoning effort is auto-selected from `intent`; there is no public effort parameter. |
+| `max_age_seconds` | integer | Optional | Max acceptable cached age for this call, overriding the default TTL (v0.3.0). |
 
 ### Example Queries Handled by Agents
 
@@ -215,7 +216,7 @@ print(response.choices[0].message.content)
   *(Routes to Smart Lane with Grok 4.6 + medium reasoning)*
 - **Tweet URL inspection**: `{"query": "https://x.com/xai/status/2087630662631100586"}`  
   *(Routes to Deterministic oEmbed: 0 model calls, instant return)*
-- **Fact verification**: `{"query": "Did xAI announce Grok 4.6 release on August 12?", "intent": "verify_claim", "_reasoning_effort": "high"}`  
+- **Fact verification**: `{"query": "Did xAI announce Grok 4.6 release on August 12?", "intent": "verify_claim"}` (auto-selects high reasoning effort; add `force_refresh: true` when cache freshness matters)  
   *(Routes to Smart Lane with high/xhigh reasoning effort)*
 
 ### Agent Self-Healing Authentication

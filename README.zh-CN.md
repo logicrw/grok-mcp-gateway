@@ -203,9 +203,10 @@ print(response.choices[0].message.content)
 | `sort` | string | 可选 | `latest` 或 `relevance`（query 检索默认 `relevance`；纯 handles 检索默认 `latest`）。 |
 | `best_effort_filters` | object | 可选 | 互动量过滤：`min_likes`、`min_reposts`、`min_replies`、`min_views`。 |
 | `quality` | object | 可选 | 自定义质量门禁：`min_items`、`require_status_url`、`require_original_text`。 |
-| `_reasoning_effort` | string | 可选 | 显式推理档位：`low`、`medium`、`high`、`xhigh`（grok-4.6 支持透传）。 |
 | `model_policy` | string | 可选 | `auto`、`stable_only` 或 `raw_expanded`。 |
 | `model` | string | 可选 | 显式指定模型覆盖（如 `grok-4.6`、`grok-4.5`）。 |
+| `force_refresh` | boolean | 可选 | 跳过本地响应缓存强制上游检索（v0.3.0）。推理档位由网关按 `intent` 自动选择，无公开参数。 |
+| `max_age_seconds` | integer | 可选 | 当次可接受的缓存年龄上限，覆盖默认 TTL（v0.3.0）。 |
 
 ### 智能体典型查询场景
 
@@ -215,8 +216,8 @@ print(response.choices[0].message.content)
   *(自动路由至 Smart Lane：Grok 4.6 + medium 推理)*
 - **推文直链解析**：`{"query": "https://x.com/xai/status/2087630662631100586"}`  
   *(自动路由至确定性 oEmbed：0 模型调用，毫秒级保真返回)*
-- **事实与断言核查**：`{"query": "xAI 是否在8月12日正式发布了 Grok 4.6？", "intent": "verify_claim", "_reasoning_effort": "high"}`  
-  *(自动路由至 Smart Lane：high/xhigh 推理档位严格求证)*
+- **事实与断言核查**：`{"query": "xAI 是否在8月12日正式发布了 Grok 4.6？", "intent": "verify_claim"}`  
+  *(自动路由至 Smart Lane：`verify_claim` 自动选择 high 推理档严格求证；推文直链与最新流默认走本地缓存，需实时数据时加 `force_refresh: true`)*
 
 ### Agent 自动自愈登录机制
 

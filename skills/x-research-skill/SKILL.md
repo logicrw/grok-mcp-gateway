@@ -30,10 +30,12 @@ Select the appropriate `intent` and parameters for `x_retrieve` to maximize effi
 
 | Goal / Scenario | Recommended `intent` & Arguments |
 | :--- | :--- |
-| **Fact-checking / Rumor verification** | `intent: "verify_claim"`, query describing the claim. Add `_reasoning_effort: "high"` (or `"xhigh"`) for complex cross-verification. |
+| **Fact-checking / Rumor verification** | `intent: "verify_claim"`, query describing the claim. The gateway automatically selects high reasoning effort for this intent — do not pass any effort parameter. |
 | **Launch reactions / Sentiment tracking** | `intent: "reaction_tracking"`, query about the release or event. |
 | **Latest tweets from accounts** | `handles: ["user1", "user2"]`, `sort: "latest"`, `lookback_days: 7`. |
-| **Exact Tweet lookup & Seed research** | Pass full Tweet URL or 15-20 digit status ID directly in `query`. (Resolves in <100ms via 0-cost oEmbed). |
+| **Exact Tweet lookup & Seed research** | Pass full Tweet URL or 15-20 digit status ID directly in `query`. (Resolves in <100ms via 0-cost oEmbed.) |
+| **Breaking news / must be current** | Add `force_refresh: true` to bypass the response cache and hit upstream. Otherwise repeated deterministic queries are served from cache (check `cache.age_seconds` in the response). |
+| **Tracking an author over time** | Re-run the same `handles` + `sort: "latest"` query; items carry `new_since_last_fetch: true/false` marking posts unseen in previous fetches — build monitoring digests from those. |
 | **Noise & Spam reduction** | Use `best_effort_filters: {"min_likes": 20, "min_views": 5000}` instead of manual query hackery. |
 
 ---
