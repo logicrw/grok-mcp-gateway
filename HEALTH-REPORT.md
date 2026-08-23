@@ -391,3 +391,61 @@ mcp_retrieve.py  4 段流水线编排（oEmbed / fast / smart / raw）
    - Fast 失败且预算 < 35s 直接抛错；Smart 失败写 warning 再走 raw（P2-9）。
    - Target pipeline 不算 quality-gate 指标（P2-4）。
 8. **验证口令**：`ruff check . && basedpyright && pytest -q -W error`。不要只跑单文件就宣称完成。
+
+---
+
+## 第三阶段记录
+
+- **日期**: 2026-08-23
+- **选题**: 方向 B — 给 `xhigh` 做明确决策（无探活 → 删用户文档承诺，不改默认档位）
+- **commit**: `b280906`
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **190 passed**（第二阶段结束 189）
+
+### 为什么选它
+
+第二阶段交接第 3 条写明「下一件仍建议方向 B 的探活或删文档」。没有安全的 grok-4.6 线上探活，不能把 `verify_claim` 默认改成 `xhigh`（账单/延迟）。用户文档继续写「会挂载 xhigh」比死 env 更会误导调用方。
+
+### 实际完成
+
+- `README.md:56`、`README.zh-CN.md:56`、`docs/retrieval-architecture.md:40` 改为 Smart Lane 只挂 `low` / `medium` / `high`，并写明 **不发送** `xhigh`。
+- `tests/test_retrieve_policy.py::test_xhigh_is_not_sent_on_grok_46_or_verify_claim`：
+  - `build_xai_responses_payload(..., reasoning_effort="xhigh")` 无 `reasoning` 键；
+  - `resolve_plan(verify_claim)` 仍是 `high`；
+  - `mcp_x_search._x_search_payload(_reasoning_effort="xhigh")` 同样丢掉。
+- `retrieve_policy.py` / `mcp_x_search.py` 能力表未加入 `xhigh`（刻意）。
+- RFC 正文里的 `xhigh` 表格留到第四阶段用 historical banner 覆盖，本阶段不改写 RFC 全篇。
+
+### 未做
+
+- 没有对真实 Responses API 打 `effort=xhigh`。
+- 没有加 `GROK_PROXY_VERIFY_REASONING_EFFORT` 开关。
+
+---
+
+## 第四阶段记录
+
+- **日期**: 2026-08-23
+- **选题**: 方向 C — 结束 Hermes 运行时叙事，只留显式迁移入口
+- **commit**: `e765717`
+- **验证**: `ruff check .` 通过；`basedpyright` 0 errors；`pytest -q -W error` **191 passed**；`python scripts/import_xai_oauth.py --help` 可用；`rg HERMES_POLL_INTERVAL` 在运行时源码中为空
+
+### 为什么选它
+
+交接第 4 条：小清扫 PR，防止后续 Agent 按过期 RFC 把隐式 Hermes bootstrap 接回来。`test_read_local_state_never_implicitly_bootstraps_from_hermes` 已经禁止该行为，文档却仍在教人相反的事实。
+
+### 实际完成
+
+- 删除 `config.HERMES_POLL_INTERVAL` 和 `.env.example` 中的对应行。新增 `test_runtime_config_does_not_expose_hermes_poll_interval`。
+- RFC 顶部加 **Status (2026-08-23): Historical**，写明 native PKCE、`read_local_state` 不读 Hermes、`xhigh` 未发送。
+- `docs/chatgpt-pro-consult-standalone-oauth.md`：空 state 要求 `--login`，不再写自动读 `~/.hermes/auth.json`。
+- `services/service-examples.md`：`HERMES_AUTH_PATH` 仅 import/export 脚本使用。
+- `token_manager.init_local_state` 文档改为「显式一次性导入」，并写明启动路径走 `read_local_state()`。**函数体未删**，测试 `tests/test_security.py` 仍覆盖它。
+- **未删** `load_from_hermes`、`rehydrate_from_hermes`、`scripts/import_xai_oauth.py`、`scripts/export_xai_oauth.py`。
+
+### 给下一任（第三/四阶段之后）
+
+1. 用户文档与代码在 `xhigh` 上已对齐。若以后要启用，必须先有真实 200 + usage 证据，再用 env 打开，**不要**默认切 `xhigh`。
+2. RFC 只当历史包。实现前读 `docs/retrieval-architecture.md` 和本报告。
+3. 方向 D（`retrieve/` 收包）和方向 E（脱敏 xAI fixture）仍未做。E 仍然更值钱，但需要一次真实采样。
+4. 仍未修：错误载荷 stage 名 `stable_extract`；Fast 预算不足直接抛错 vs Smart 降级；target pipeline 不计 quality-gate 指标。
+5. 验证口令不变：`ruff check . && basedpyright && pytest -q -W error`。
