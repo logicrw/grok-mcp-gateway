@@ -6,7 +6,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from retrieve_policy import RequestBudget, model_supports_reasoning_effort, reasoning_effort_for
+import mcp_x_search
+from retrieve_policy import (
+    RequestBudget,
+    build_xai_responses_payload,
+    model_supports_reasoning_effort,
+    reasoning_effort_for,
+    resolve_plan,
+)
 from retrieve_stages import StageTimeout, run_search_stage
 from xai_responses import ResponsesResult
 
@@ -31,6 +38,38 @@ def test_reasoning_effort_is_only_enabled_for_known_reasoning_models():
     assert model_supports_reasoning_effort("grok-4.6-latest") is True
     assert model_supports_reasoning_effort("grok-composer-2.5-fast") is False
     assert model_supports_reasoning_effort("custom-model") is False
+
+
+def test_xhigh_is_not_sent_on_grok_46_or_verify_claim():
+    dropped = build_xai_responses_payload(
+        query="claim",
+        x_search_tool={"type": "x_search"},
+        model="grok-4.6",
+        max_turns=3,
+        store=False,
+        structured_output=True,
+        reasoning_effort="xhigh",
+    )
+    assert "reasoning" not in dropped
+
+    plan = resolve_plan(
+        {
+            "intent": "verify_claim",
+            "mode": "claim_verification",
+            "query": "Did xAI announce Grok 4.6?",
+        }
+    )
+    assert plan.reasoning_effort == "high"
+
+    production = mcp_x_search._x_search_payload(
+        {
+            "query": "claim",
+            "model": "grok-4.6",
+            "_structured_output": True,
+            "_reasoning_effort": "xhigh",
+        }
+    )
+    assert "reasoning" not in production
 
 
 def test_stage_timeout_wraps_entire_search_call():

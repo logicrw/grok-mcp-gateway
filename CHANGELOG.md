@@ -46,6 +46,8 @@ All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
 ### Changed
 
+- Document Smart Lane reasoning as `low` / `medium` / `high` only. `xhigh` is
+  not in the capability table and is not sent on the Responses payload.
 - Bump the MCP `x_retrieve` stable retrieval fallback from `grok-4.3` to
   `grok-4.5`, keeping `GROK_PROXY_RETRIEVE_MODEL` and `GROK_PROXY_MCP_MODEL`
   override precedence unchanged. See the official Grok 4.5 and X Search tool

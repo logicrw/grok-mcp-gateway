@@ -53,7 +53,7 @@ flowchart TD
    - 基于 xAI 非思考架构：**1~3 秒极速响应**、1M 超大上下文、零 Thinking 延迟、成本极低。
 3. **旗舰智能通道（Smart Lane: `grok-4.6` 旗舰模型）**：
    - 专门用于复杂语义调研、深度信源挖掘、社交舆论追踪与事实核查（`claim_verification`）。
-   - 自适应挂载合规的推理档位（`low` / `medium` / `high` / `xhigh`）与多轮 Agentic `x_search` 工具链。
+   - 自适应挂载合规的推理档位（`low` / `medium` / `high`）与多轮 Agentic `x_search` 工具链。当前**不会**发送 `xhigh`。
 4. **候选扩展通道（Raw Expansion Lane: `grok-composer-2.5-fast`）**：
    - 针对冷门、生僻话题的高吞吐候选深挖源。非结构化文本在进入结果前必须经过严格的确定性正则与 URL 白名单清洗。
 
