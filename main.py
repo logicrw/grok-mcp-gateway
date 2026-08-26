@@ -650,6 +650,10 @@ async def health(response: Response, deep: bool = False) -> dict:
             "token_expires_at": exp_str,
             "token_endpoint": state.get("token_endpoint"),
             "oauth_refresh": refresh,
+            "runtime_environment": {
+                "sanitized": True,
+                "discarded_variable_count": config.RUNTIME_ENV_DISCARDED_VARIABLE_COUNT,
+            },
             "mcp": _mcp_health_status(),
         }
         if exp and exp <= time.time():
@@ -767,6 +771,12 @@ async def mcp(request: Request) -> Response:
 @app.options("/mcp")
 async def mcp_transport_not_available() -> Response:
     return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.head("/mcp")
+async def mcp_head() -> Response:
+    """Keep endpoint probes local instead of proxying them to api.x.ai."""
+    return Response(status_code=204, headers={"Allow": "POST, OPTIONS, HEAD"})
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])

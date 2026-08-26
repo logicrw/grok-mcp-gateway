@@ -185,7 +185,7 @@ def test_tier_transitions_reuse_one_admission_permit(monkeypatch):
                 "method": "tools/call",
                 "params": {
                     "name": "x_retrieve",
-                    "arguments": {"handles": ["@xai"]},
+                    "arguments": {"intent": "posts", "query": "recent xAI posts"},
                 },
             }
         )

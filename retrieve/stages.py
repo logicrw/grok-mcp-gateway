@@ -54,7 +54,7 @@ async def run_search_stage(
         # already surfaced this downgrade as a route warning.
         stage_arguments.pop("_structured_output", None)
 
-    timeout = budget.stage_timeout(stage_seconds)
+    timeout = budget.stage_timeout(stage_seconds) if stage_seconds is not None else budget.remaining()
     if timeout <= 0:
         record_timeout("total")
         record_error(stage=stage, kind="total_timeout")

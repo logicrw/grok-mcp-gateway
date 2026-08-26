@@ -33,6 +33,7 @@ RETRIEVE_ARGUMENT_KEYS = {
     "quality",
     "model_policy",
     "model",
+    "reasoning_effort",
     "force_refresh",
     "max_age_seconds",
 }
@@ -167,6 +168,11 @@ def retrieve_tool_definition(default_model: str) -> Dict[str, Any]:
                     "minLength": 1,
                     "maxLength": RETRIEVE_MODEL_MAX_CHARS,
                     "description": f"Optional stable xAI model. Defaults to {default_model}.",
+                },
+                "reasoning_effort": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "xhigh"],
+                    "description": "Optional reasoning effort for grok-4.6. Defaults to 'low' for fast general research, and 'high' for verify_claim.",
                 },
                 "force_refresh": {
                     "type": "boolean",

@@ -599,19 +599,13 @@ def test_tools_call_routes_status_targets_before_latest_by_handle(monkeypatch):
     assert "最近30天" not in seen.get("query", "")
 
 
-def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatch):
+def test_tools_call_does_not_expand_latest_by_handle_when_empty(monkeypatch):
     calls = []
 
     async def fake_call(arguments):
         calls.append(dict(arguments))
-        if len(calls) in (1, 2):
-            return xai_responses.ResponsesResult('{"posts":[]}', {}, [], None, arguments.get("model") or "grok-4.3")
         return xai_responses.ResponsesResult(
-            '{"posts":[{"text":"raw latest","author":"logicrw","url":"https://x.com/logicrw/status/2"}]}',
-            {},
-            [{"url": "https://x.com/logicrw/status/2"}],
-            None,
-            pipeline.RAW_MODEL,
+            '{"posts":[]}', {}, [], None, arguments.get("model") or "grok-4.3"
         )
 
     monkeypatch.setattr(x_search, "_call_x_search_result", fake_call)
@@ -635,10 +629,15 @@ def test_tools_call_runs_raw_expansion_when_latest_by_handle_is_empty(monkeypatc
     )
 
     structured = response["result"]["structuredContent"]
-    assert len(calls) == 3
-    assert calls[2]["model"] == pipeline.RAW_MODEL
-    assert structured["items"][0]["text"] == "raw latest"
-    assert structured["retrieval_stages"][-1]["status"] == "success"
+    assert len(calls) == 1
+    assert structured["items"] == []
+    assert structured["retrieval_status"] == "empty"
+    assert structured["retrieval_stages"][-1] == {
+        "name": "raw_expansion",
+        "model": pipeline.RAW_MODEL,
+        "status": "skipped",
+        "reason": "latest_by_handle",
+    }
 
 
 def test_tools_call_reports_no_match_for_missing_target_status(monkeypatch):

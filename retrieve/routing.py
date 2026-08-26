@@ -72,6 +72,7 @@ def build_retrieve_search_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str
             "routing_warnings": routing_warnings,
             "force_refresh": force_refresh,
             "max_age_seconds": max_age_seconds,
+            "reasoning_effort": _clean_reasoning_effort(arguments),
         }
     )
     return search_arguments, metadata
@@ -84,6 +85,18 @@ def _clean_max_age_seconds(arguments: Dict[str, Any]) -> Optional[int]:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("max_age_seconds must be a non-negative integer")
     return min(value, 2_592_000)
+
+
+def _clean_reasoning_effort(arguments: Dict[str, Any]) -> Optional[str]:
+    value = arguments.get("reasoning_effort")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("reasoning_effort must be a string")
+    cleaned = value.strip().lower()
+    if cleaned not in {"low", "medium", "high", "xhigh"}:
+        raise ValueError("reasoning_effort must be one of low, medium, high, xhigh")
+    return cleaned
 
 
 def _copy_optional(source: Dict[str, Any], target: Dict[str, Any], key: str) -> None:

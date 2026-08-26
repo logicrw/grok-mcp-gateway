@@ -7,6 +7,81 @@ from pathlib import Path
 from typing import Optional
 
 
+# A LaunchAgent can inherit credentials intended for unrelated developer tools.
+# The gateway only needs this explicit configuration surface; drop everything
+# else before any HTTP/OAuth modules are imported.  Keeping this in config.py
+# covers both the HTTP service and the stdio MCP entrypoint.
+_RUNTIME_ENV_ALLOWLIST = frozenset(
+    {
+        "HOME",
+        "PATH",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "PYTHONUNBUFFERED",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "LOG_LEVEL",
+        "PROXY_HOST",
+        "PROXY_PORT",
+        "PROXY_API_KEY",
+        "HERMES_AUTH_PATH",
+        "TOKEN_REFRESH_WINDOW",
+        "UPSTREAM_RETRY_ATTEMPTS",
+        "UPSTREAM_RETRY_DELAY",
+        "GROK_GATEWAY_PORT_AUTOSCAN",
+        "GROK_GATEWAY_MCP_TOOL_ALLOWLIST",
+        "GROK_GATEWAY_DEBUG_UPSTREAM_ERRORS",
+        "GROK_PROXY_ALLOWED_ORIGINS",
+        "GROK_PROXY_AUTH_STATE",
+        "GROK_PROXY_AUTO_X_SEARCH",
+        "GROK_PROXY_X_SEARCH_ALLOWED_HANDLES",
+        "GROK_PROXY_X_SEARCH_IMAGE_UNDERSTANDING",
+        "GROK_PROXY_X_SEARCH_VIDEO_UNDERSTANDING",
+        "GROK_PROXY_X_SEARCH_INTERNAL_TOOL_NAMES",
+        "GROK_PROXY_RETRIEVE_MODEL",
+        "GROK_PROXY_MCP_MODEL",
+        "GROK_PROXY_FAST_MODEL",
+        "GROK_PROXY_RETRIEVE_RAW_MODEL",
+        "GROK_PROXY_MCP_RAW_MODEL",
+        "GROK_PROXY_ENABLE_AUTO_TIERING",
+        "GROK_PROXY_RETRIEVE_CONCURRENCY",
+        "GROK_PROXY_MCP_X_SEARCH_CONCURRENCY",
+        "GROK_PROXY_RETRIEVE_QUEUE_TIMEOUT_SECONDS",
+        "GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS",
+        "GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS",
+        "GROK_PROXY_RETRIEVE_MAX_TARGETS",
+        "GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY",
+        "GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS",
+        "GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS",
+        "GROK_PROXY_SMART_REASONING_EFFORT",
+        "GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS",
+        "GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS",
+        "GROK_PROXY_FALLBACK_RESERVE_SECONDS",
+        "GROK_PROXY_FAST_MAX_TURNS",
+        "GROK_PROXY_SMART_MAX_TURNS",
+        "GROK_PROXY_STORE_RESPONSES",
+        "GROK_PROXY_RETRIEVE_CACHE",
+        "GROK_PROXY_RETRIEVE_CACHE_PATH",
+        "GROK_PROXY_RETRIEVE_CACHE_MAX_ENTRIES",
+        "GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS",
+        "GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS",
+    }
+)
+
+
+def _sanitize_runtime_environment() -> int:
+    retained = {name: value for name, value in os.environ.items() if name in _RUNTIME_ENV_ALLOWLIST}
+    discarded_count = len(os.environ) - len(retained)
+    os.environ.clear()
+    os.environ.update(retained)
+    return discarded_count
+
+
+RUNTIME_ENV_DISCARDED_VARIABLE_COUNT = _sanitize_runtime_environment()
+
+
 def _env_int(
     name: str,
     default: int,
@@ -128,7 +203,7 @@ GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS: float = _env_float(
 )
 GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS: float = min(
     GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS,
-    _env_float("GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS", 60.0, minimum=5.0, maximum=120.0),
+    _env_float("GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS", 80.0, minimum=5.0, maximum=120.0),
 )
 GROK_PROXY_RETRIEVE_MAX_TARGETS: int = _env_int(
     "GROK_PROXY_RETRIEVE_MAX_TARGETS", 5, minimum=1, maximum=10
@@ -137,22 +212,39 @@ GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY: int = _env_int(
     "GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY", 3, minimum=1, maximum=10
 )
 
-# v2.1 Adaptive routing and execution lane configuration
+# v0.2.1 Adaptive routing and execution lane configuration
 GROK_PROXY_RETRIEVE_MODEL: str = (
     os.getenv("GROK_PROXY_RETRIEVE_MODEL")
     or os.getenv("GROK_PROXY_MCP_MODEL")
     or "grok-4.6"
 ).strip() or "grok-4.6"
-GROK_PROXY_FAST_MODEL: str = (
-    os.getenv("GROK_PROXY_FAST_MODEL", "grok-4.20-0309-non-reasoning").strip()
+GROK_PROXY_RETRIEVE_FAST_MODEL: str = (
+    os.getenv("GROK_PROXY_RETRIEVE_FAST_MODEL")
+    or os.getenv("GROK_PROXY_MCP_FAST_MODEL")
+    or os.getenv("GROK_PROXY_FAST_MODEL")
     or "grok-4.20-0309-non-reasoning"
-)
+).strip() or "grok-4.20-0309-non-reasoning"
+GROK_PROXY_FAST_MODEL: str = GROK_PROXY_RETRIEVE_FAST_MODEL
+GROK_PROXY_RETRIEVE_RAW_MODEL: str = (
+    os.getenv("GROK_PROXY_RETRIEVE_RAW_MODEL")
+    or os.getenv("GROK_PROXY_MCP_RAW_MODEL")
+    or "grok-composer-2.5-fast"
+).strip() or "grok-composer-2.5-fast"
 GROK_PROXY_ENABLE_AUTO_TIERING: bool = _env_bool("GROK_PROXY_ENABLE_AUTO_TIERING", True)
 GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS: float = _env_float(
-    "GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS", 15.0, minimum=5.0, maximum=60.0
+    "GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS", 10.0, minimum=5.0, maximum=60.0
 )
 GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS: float = _env_float(
-    "GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS", 60.0, minimum=5.0, maximum=120.0
+    "GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS", 80.0, minimum=5.0, maximum=120.0
+)
+GROK_PROXY_SMART_REASONING_EFFORT: str = (
+    os.getenv("GROK_PROXY_SMART_REASONING_EFFORT", "").strip().lower()
+)
+
+# Raw expansion is a best-effort recovery step.  It must never turn an
+# otherwise bounded MCP call into a second long-running model invocation.
+GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS: float = _env_float(
+    "GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS", 30.0, minimum=2.0, maximum=60.0
 )
 
 GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS: float = _env_float(
@@ -180,5 +272,3 @@ GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS: int = _env_int(
 GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS: int = _env_int(
     "GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS", 480, minimum=30, maximum=86_400
 )
-
-

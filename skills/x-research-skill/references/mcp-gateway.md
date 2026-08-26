@@ -4,9 +4,9 @@
 
 `x_retrieve` is the unified, multi-tier public tool exposed by `grok_mcp_gateway` (`http://127.0.0.1:9996/mcp`).
 
-Reasoning effort is selected automatically by the gateway from the `intent`
-(`verify_claim` → high; research/reaction/source → medium). There is no
-public effort parameter — passing one is rejected.
+Reasoning effort defaults to `low` for fast general research (~29s) and `high`
+for `verify_claim`. Callers can also explicitly pass `reasoning_effort` (`"low"`,
+`"medium"`, `"high"`, `"xhigh"`) or configure `GROK_PROXY_SMART_REASONING_EFFORT`.
 
 ### Common Invocation Patterns
 

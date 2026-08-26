@@ -205,7 +205,8 @@ print(response.choices[0].message.content)
 | `quality` | object | Optional | Custom quality thresholds: `min_items`, `require_status_url`, `require_original_text`. |
 | `model_policy` | string | Optional | `auto`, `stable_only`, or `raw_expanded`. |
 | `model` | string | Optional | Explicit model override (e.g. `grok-4.6`, `grok-4.5`). |
-| `force_refresh` | boolean | Optional | Bypass the local response cache and force an upstream retrieval (v0.3.0). Reasoning effort is auto-selected from `intent`; there is no public effort parameter. |
+| `reasoning_effort` | string | Optional | Explicit reasoning effort override (`low`, `medium`, `high`, `xhigh`). Defaults to `low` for fast research (~29s), and `high` for `verify_claim`. |
+| `force_refresh` | boolean | Optional | Bypass the local response cache and force an upstream retrieval (v0.3.0). |
 | `max_age_seconds` | integer | Optional | Max acceptable cached age for this call, overriding the default TTL (v0.3.0). |
 
 ### Example Queries Handled by Agents
@@ -243,10 +244,12 @@ All gateway settings can be customized via environment variables or `.env`:
 | `GROK_PROXY_FAST_MODEL` | `grok-4.20-0309-non-reasoning` | Fast Lane non-reasoning model. |
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | Raw expansion candidate deep-dive model. |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | `true` | Enable automated 4-tier adaptive routing & escalation. |
-| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `15.0` | Timeout ceiling for Fast Lane requests. |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `60.0` | Timeout ceiling for Smart Lane requests. |
+| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `10.0` | Timeout ceiling for Fast Lane requests. |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `80.0` | Timeout ceiling for Smart Lane requests. |
+| `GROK_PROXY_SMART_REASONING_EFFORT` | `""` (`low`) | Default reasoning effort for Smart Lane (`low`, `medium`, `high`, `xhigh`). `low` defaults to ~29s response. |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | `35.0` | Minimum remaining budget required to trigger Smart escalation. |
 | `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | Hard total deadline for any `x_retrieve` invocation. |
+| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `30.0` | Maximum time reserved for best-effort raw expansion. |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Maximum tool iterations for Fast Lane. |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Maximum tool iterations for Smart Lane. |
 | `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | Concurrency permit limit for upstream xAI calls (legacy `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` still honored). One permit covers all tier stages of a request. |

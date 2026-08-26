@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Any, Dict
 
 import config
+import token_manager
 import xai_responses
 from error_sanitizer import sanitize_text
 from retrieve import cache
@@ -366,7 +367,7 @@ async def _run_general_stages(
             stage_seconds=plan.stage_timeout_seconds,
         )
     except Exception as exc:
-        if plan.initial_lane != "fast":
+        if isinstance(exc, token_manager.AuthRequiredError):
             raise
         payload = _failed_stage_payload(
             metadata,
@@ -375,10 +376,15 @@ async def _run_general_stages(
             error_text=sanitize_text(exc),
         )
         _record_quality(payload, metadata)
-        if budget.remaining() >= get_routing_config().smart_escalation_min_remaining_seconds:
+        if (
+            plan.initial_lane == "fast"
+            and budget.remaining() >= get_routing_config().smart_escalation_min_remaining_seconds
+        ):
             record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
             await _run_smart_escalation(payload, search_arguments, metadata, plan, search, budget)
         await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
+        if not payload.get("items") and not payload.get("sources"):
+            raise exc
         return payload
 
     payload = assemble_payload(result, metadata, stage_name=stage_name)
@@ -401,7 +407,7 @@ async def _run_smart_escalation(
     budget: RequestBudget,
 ) -> None:
     routing_config = get_routing_config()
-    smart_effort = _smart_effort(plan.objective_mode)
+    smart_effort = _smart_effort(plan.objective_mode, metadata.get("reasoning_effort"))
     smart_arguments = dict(search_arguments)
     smart_arguments["model"] = routing_config.smart_model
     smart_arguments["_max_turns"] = routing_config.smart_max_turns
@@ -456,6 +462,7 @@ async def _maybe_run_raw_expansion(
             stage="raw_expansion",
             budget=budget,
             reasoning_effort=None,
+            stage_seconds=config.GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         _raw_expansion_counts[(reason, "failed")] += 1
@@ -472,7 +479,7 @@ async def _run_public_oembed(payload: Dict[str, Any], metadata: Dict[str, Any], 
     status_ids = list(metadata.get("target_status_ids") or [])
     if not status_ids:
         return
-    timeout = min(budget.stage_timeout(), OEMBED_TIMEOUT_SECONDS + 2.0)
+    timeout = budget.stage_timeout(OEMBED_TIMEOUT_SECONDS + 2.0)
     started = time.monotonic()
     if timeout <= 0:
         record_timeout("total")

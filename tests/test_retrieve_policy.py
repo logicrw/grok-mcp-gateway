@@ -56,7 +56,7 @@ def test_xhigh_is_sent_on_grok_46_when_explicit():
     assert "reasoning" not in dropped_on_45
 
 
-def test_smart_defaults_are_medium_and_verify_claim_is_high():
+def test_smart_defaults_are_low_and_verify_claim_is_high():
     research = resolve_plan(
         {
             "intent": "research",
@@ -64,7 +64,7 @@ def test_smart_defaults_are_medium_and_verify_claim_is_high():
             "query": "Grok 4.6 architecture",
         }
     )
-    assert research.reasoning_effort == "medium"
+    assert research.reasoning_effort == "low"
 
     verify = resolve_plan(
         {
@@ -74,6 +74,42 @@ def test_smart_defaults_are_medium_and_verify_claim_is_high():
         }
     )
     assert verify.reasoning_effort == "high"
+
+
+def test_smart_explicit_reasoning_effort_overrides_default():
+    explicit_high = resolve_plan(
+        {
+            "intent": "research",
+            "mode": "semantic_research",
+            "query": "Grok 4.6 architecture",
+            "reasoning_effort": "high",
+        }
+    )
+    assert explicit_high.reasoning_effort == "high"
+
+    explicit_medium = resolve_plan(
+        {
+            "intent": "research",
+            "mode": "semantic_research",
+            "query": "Grok 4.6 architecture",
+            "reasoning_effort": "medium",
+        }
+    )
+    assert explicit_medium.reasoning_effort == "medium"
+
+
+def test_smart_env_reasoning_effort_overrides_default(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "GROK_PROXY_SMART_REASONING_EFFORT", "medium")
+    research = resolve_plan(
+        {
+            "intent": "research",
+            "mode": "semantic_research",
+            "query": "Grok 4.6 architecture",
+        }
+    )
+    assert research.reasoning_effort == "medium"
 
 
 def test_stage_timeout_wraps_entire_search_call():

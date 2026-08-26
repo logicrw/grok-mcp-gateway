@@ -138,7 +138,9 @@ class RoutingV2Tests(unittest.TestCase):
             {"quality": {"min_items": 1}},
         )
         self.assertFalse(quality.passed)
-        self.assertTrue(
+        # An empty bounded timeline is a valid answer; do not fan it out into
+        # Smart and raw semantic searches.
+        self.assertFalse(
             should_escalate_to_smart(
                 plan,
                 quality,
@@ -302,6 +304,46 @@ class TokenRefreshCoalescingTests(unittest.IsolatedAsyncioTestCase):
             token_manager.read_local_state = original_read
             token_manager.refresh_access_token = original_refresh
             token_manager._is_expiring = original_is_expiring
+
+    def test_simple_topic_query_routes_to_fast_lane(self) -> None:
+        plan = resolve_plan(
+            {
+                "intent": "auto",
+                "mode": "semantic_research",
+                "query": "DeepSeek V3",
+                "count": 5,
+            }
+        )
+        self.assertEqual(plan.initial_lane, "fast")
+        self.assertEqual(plan.model, "grok-4.20-0309-non-reasoning")
+        self.assertTrue(plan.allow_smart_escalation)
+        self.assertIsNone(plan.reasoning_effort)
+
+    def test_topic_query_with_research_intent_routes_to_smart_lane(self) -> None:
+        plan = resolve_plan(
+            {
+                "intent": "research",
+                "mode": "semantic_research",
+                "query": "DeepSeek V3",
+                "count": 5,
+            }
+        )
+        self.assertEqual(plan.initial_lane, "smart")
+        self.assertEqual(plan.model, "grok-4.6")
+        self.assertEqual(plan.reasoning_effort, "low")
+
+    def test_topic_query_with_complex_marker_routes_to_smart_lane(self) -> None:
+        plan = resolve_plan(
+            {
+                "intent": "auto",
+                "mode": "claim_verification",
+                "query": "核查 DeepSeek V3 官方发布",
+                "count": 5,
+            }
+        )
+        self.assertEqual(plan.initial_lane, "smart")
+        self.assertEqual(plan.model, "grok-4.6")
+        self.assertEqual(plan.reasoning_effort, "high")
 
 
 if __name__ == "__main__":

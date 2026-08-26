@@ -1,4 +1,4 @@
-# X Retrieval Architecture (v2.1)
+# X Retrieval Architecture (v0.2.1)
 
 `x_retrieve` is the only public MCP retrieval tool. The gateway keeps model-dependent behavior behind one deterministic controller so model upgrades do not change the client contract.
 
@@ -22,7 +22,7 @@ controller cannot solve more simply.
 
 ## Execution Lanes
 
-The v2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
+The v0.2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
 
 1. **Deterministic Lane (oEmbed-first)**:
    - For explicit X status URLs or 15-20 digit IDs, public oEmbed is executed first concurrently.
@@ -66,9 +66,9 @@ The v2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
 | Setting | Default | Description |
 | --- | ---: | --- |
 | `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | 120.0 | Total request deadline |
-| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | 60.0 | Maximum per-stage ceiling |
-| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | 15.0 | Fast lane stage ceiling |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | 45.0 | Smart lane stage ceiling |
+| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | 80.0 | Maximum per-stage ceiling |
+| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | 10.0 | Fast lane stage ceiling |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | 80.0 | Smart lane stage ceiling |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | 35.0 | Minimum remaining budget required for Smart escalation |
 | `GROK_PROXY_FALLBACK_RESERVE_SECONDS` | 8.0 | Safety reserve time for clean finalization |
 | `GROK_PROXY_FAST_MAX_TURNS` | 2 | Tool turn limit for Fast Lane |

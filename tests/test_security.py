@@ -514,6 +514,7 @@ def test_health_reports_mcp_tool_status(monkeypatch, loopback_client):
     assert payload["mcp"]["removed_tools"] == ["x_search", "x_latest_posts", "x_posts"]
     assert payload["mcp"]["models"]["stable"] == {"id": "grok-4.6", "listing": "unknown"}
     assert payload["mcp"]["models"]["raw"]["listing"] == "unknown"
+    assert payload["runtime_environment"]["sanitized"] is True
 
 
 def test_deep_health_reports_model_listing_without_inferring_entitlement(monkeypatch, loopback_client):

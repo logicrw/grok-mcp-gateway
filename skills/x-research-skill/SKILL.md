@@ -30,7 +30,9 @@ Select the appropriate `intent` and parameters for `x_retrieve` to maximize effi
 
 | Goal / Scenario | Recommended `intent` & Arguments |
 | :--- | :--- |
-| **Fact-checking / Rumor verification** | `intent: "verify_claim"`, query describing the claim. The gateway automatically selects high reasoning effort for this intent — do not pass any effort parameter. |
+| **Fact-checking / Rumor verification** | `intent: "verify_claim"`, query describing the claim (auto-selects `high` reasoning). Or pass explicit `reasoning_effort: "high"`. |
+| **Topic discussions / General posts** | `intent: "posts"` for sub-6s Fast Lane, or `intent: "research"` with default `low` reasoning (~29s). |
+| **Deep architectural / Analytical inquiry** | Pass explicit `reasoning_effort: "high"` (or `"medium"`) when deeper CoT is requested. |
 | **Launch reactions / Sentiment tracking** | `intent: "reaction_tracking"`, query about the release or event. |
 | **Latest tweets from accounts** | `handles: ["user1", "user2"]`, `sort: "latest"`, `lookback_days: 7`. |
 | **Exact Tweet lookup & Seed research** | Pass full Tweet URL or 15-20 digit status ID directly in `query`. (Resolves in <100ms via 0-cost oEmbed.) |

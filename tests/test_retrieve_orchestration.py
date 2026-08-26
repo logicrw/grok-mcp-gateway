@@ -205,21 +205,15 @@ def test_error_result_uses_parsed_latest_by_handle_mode():
     assert payload["retrieval_stages"][0]["name"] == "fast_extract"
 
 
-def test_fast_lane_failure_without_smart_budget_degrades_via_raw(monkeypatch):
+def test_latest_by_handle_empty_result_does_not_fan_out_to_smart_or_raw(monkeypatch):
     import config
-    from retrieve.schema import RAW_MODEL
 
-    monkeypatch.setattr(config, "GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS", 10_000.0)
+    calls = []
 
     async def fake_search(arguments):
-        if arguments.get("model") == config.GROK_PROXY_FAST_MODEL:
-            raise RuntimeError("fast lane unavailable")
+        calls.append(dict(arguments))
         return xai_responses.ResponsesResult(
-            '{"posts":[{"text":"rescued from raw","url":"https://x.com/xai/status/2071385784154759468"}]}',
-            {},
-            [{"url": "https://x.com/xai/status/2071385784154759468"}],
-            None,
-            arguments["model"],
+            '{"posts":[]}', {}, [], None, arguments["model"]
         )
 
     monkeypatch.setattr(x_search, "_call_x_search_result", fake_search)
@@ -228,11 +222,14 @@ def test_fast_lane_failure_without_smart_budget_degrades_via_raw(monkeypatch):
     structured = response["result"]["structuredContent"]
 
     assert response["result"]["isError"] is False
-    assert structured["retrieval_status"] == "degraded"
-    assert any("fast_extract failed" in warning for warning in structured["warnings"])
-    assert any(stage["name"] == "fast_extract" and stage["status"] == "failed" for stage in structured["retrieval_stages"])
-    assert any(stage["name"] == "raw_expansion" and stage.get("model") == RAW_MODEL for stage in structured["retrieval_stages"])
-    assert structured["items"][0]["text"] == "rescued from raw"
+    assert structured["retrieval_status"] == "empty"
+    assert [call["model"] for call in calls] == [config.GROK_PROXY_FAST_MODEL]
+    assert [stage["name"] for stage in structured["retrieval_stages"]] == [
+        "fast_extract",
+        "raw_expansion",
+    ]
+    assert structured["retrieval_stages"][1]["status"] == "skipped"
+    assert structured["retrieval_stages"][1]["reason"] == "latest_by_handle"
 
 
 def test_exhausted_oembed_budget_is_visible_as_warning():
@@ -272,3 +269,33 @@ def test_x_search_payload_only_adds_explicit_reasoning_effort():
 
     assert with_reasoning["reasoning"] == {"effort": "low"}
     assert "reasoning" not in without_reasoning
+
+
+def test_smart_lane_failure_rescued_by_raw_expansion(monkeypatch):
+    async def fallback_search(arguments):
+        if arguments.get("model") == "grok-composer-2.5-fast":
+            return xai_responses.ResponsesResult(
+                '{"posts":[{"text":"rescued by raw","url":"https://x.com/user/status/999"}]}',
+                {},
+                [],
+                None,
+                "grok-composer-2.5-fast",
+            )
+        raise RuntimeError("xAI 502 Bad Gateway")
+
+    monkeypatch.setattr(x_search, "_call_x_search_result", fallback_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
+
+    response = _call(
+        {
+            "query": "deep research topic",
+            "intent": "research",
+        }
+    )
+
+    structured = response["result"]["structuredContent"]
+    assert response["result"]["isError"] is False
+    assert structured["retrieval_status"] == "degraded"
+    assert structured["items"][0]["text"] == "rescued by raw"
+    assert any(s["name"] == "smart_extract" and s["status"] == "failed" for s in structured["retrieval_stages"])
+    assert any(s["name"] == "raw_expansion" and s["status"] == "success" for s in structured["retrieval_stages"])

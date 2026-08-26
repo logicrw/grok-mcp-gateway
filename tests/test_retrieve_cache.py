@@ -195,6 +195,7 @@ def test_concurrent_identical_requests_share_one_upstream_run(monkeypatch):
         first = asyncio.create_task(one())
         await asyncio.sleep(0.05)  # first request is now blocked in-flight upstream
         second = asyncio.create_task(one())
+        await asyncio.sleep(0.02)  # allow second request to join the in-flight coalesce
         release.set()
         return await asyncio.gather(first, second)
 

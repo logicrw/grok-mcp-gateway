@@ -205,7 +205,8 @@ print(response.choices[0].message.content)
 | `quality` | object | 可选 | 自定义质量门禁：`min_items`、`require_status_url`、`require_original_text`。 |
 | `model_policy` | string | 可选 | `auto`、`stable_only` 或 `raw_expanded`。 |
 | `model` | string | 可选 | 显式指定模型覆盖（如 `grok-4.6`、`grok-4.5`）。 |
-| `force_refresh` | boolean | 可选 | 跳过本地响应缓存强制上游检索（v0.3.0）。推理档位由网关按 `intent` 自动选择，无公开参数。 |
+| `reasoning_effort` | string | 可选 | 显式推理档位覆盖（`low`、`medium`、`high`、`xhigh`）。通用检索默认 `low`（~29秒），`verify_claim` 默认 `high`。 |
+| `force_refresh` | boolean | 可选 | 跳过本地响应缓存强制上游检索（v0.3.0）。 |
 | `max_age_seconds` | integer | 可选 | 当次可接受的缓存年龄上限，覆盖默认 TTL（v0.3.0）。 |
 
 ### 智能体典型查询场景
@@ -243,10 +244,12 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 | `GROK_PROXY_FAST_MODEL` | `grok-4.20-0309-non-reasoning` | Fast Lane 极速非推理模型。 |
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | Raw Expansion 候选深挖兜底模型。 |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | `true` | 是否启用四段式自适应分流与质量门禁升级。 |
-| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `15.0` | Fast Lane 阶段超时上限。 |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `60.0` | Smart Lane 阶段超时上限。 |
+| `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `10.0` | Fast Lane 阶段超时上限。 |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `80.0` | Smart Lane 阶段超时上限。 |
+| `GROK_PROXY_SMART_REASONING_EFFORT` | `""` (`low`) | Smart Lane 默认推理档位（`low`、`medium`、`high`、`xhigh`）。`low` 档位实现 ~29 秒极速返回。 |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | `35.0` | 触发 Smart 升级所需的最低剩余时间预算。 |
 | `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | 单次 `x_retrieve` 总执行超时上限。 |
+| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `30.0` | raw 扩展的最大预留时长。 |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Fast Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Smart Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | 上游 xAI 请求的并发许可上限（兼容旧名 `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY`）。单个请求的全部层级阶段共用一个许可。 |

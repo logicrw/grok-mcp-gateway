@@ -64,7 +64,11 @@ def raw_decision(payload: Dict[str, Any], metadata: Dict[str, Any]) -> tuple[boo
     if metadata.get("model_policy") == "raw_expanded":
         return True, "policy_forced"
     min_items = int(quality.get("min_items") or 1)
-    if metadata.get("mode") == "latest_by_handle" and len(payload["items"]) >= min_items:
+    # Timeline tracking is not semantic research: when Fast returns no posts,
+    # preserve that answer instead of issuing a broad raw expansion that can
+    # return unrelated material.  `raw_expanded` above remains an explicit
+    # opt-in for callers that want that trade-off.
+    if metadata.get("mode") == "latest_by_handle":
         return False, "latest_by_handle"
     if len(payload["items"]) < min_items:
         return True, "min_items"

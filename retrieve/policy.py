@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Literal, Mapping, Optional
+from typing import Any, Dict, FrozenSet, Literal, Mapping, Optional, cast
 
 import config
 from retrieve.schema import X_POSTS_STAGE_SCHEMA
@@ -33,9 +33,9 @@ class RoutingConfig:
     auto_tiering: bool = True
     fast_max_turns: int = 2
     smart_max_turns: int = 3
-    fast_stage_timeout_seconds: float = 15.0
+    fast_stage_timeout_seconds: float = 10.0
 
-    smart_stage_timeout_seconds: float = 60.0
+    smart_stage_timeout_seconds: float = 80.0
     smart_escalation_min_remaining_seconds: float = 35.0
     fallback_reserve_seconds: float = 8.0
     fast_max_handles: int = 2
@@ -126,9 +126,8 @@ class RequestBudget:
     def remaining(self) -> float:
         return max(0.0, self._deadline - time.monotonic())
 
-    def stage_timeout(self, stage_seconds: Optional[float] = None) -> float:
-        stage = config.GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS if stage_seconds is None else stage_seconds
-        return min(max(0.0, stage), self.remaining())
+    def stage_timeout(self, stage_seconds: float) -> float:
+        return min(max(0.0, stage_seconds), self.remaining())
 
 
 def _objective_mode(metadata: Mapping[str, Any]) -> ObjectiveMode:
@@ -164,7 +163,14 @@ def _target_strategy(
     return "exact_only"
 
 
-def _smart_effort(objective: ObjectiveMode) -> ReasoningEffort:
+def _smart_effort(
+    objective: ObjectiveMode, explicit_effort: Optional[str] = None
+) -> ReasoningEffort:
+    if explicit_effort in {"low", "medium", "high", "xhigh"}:
+        return cast(ReasoningEffort, explicit_effort)
+    configured = (getattr(config, "GROK_PROXY_SMART_REASONING_EFFORT", "") or "").strip().lower()
+    if configured in {"low", "medium", "high", "xhigh"}:
+        return cast(ReasoningEffort, configured)
     if objective == "claim_verification":
         return "high"
     if objective in {
@@ -172,7 +178,7 @@ def _smart_effort(objective: ObjectiveMode) -> ReasoningEffort:
         "source_discovery",
         "reaction_tracking",
     }:
-        return "medium"
+        return "low"
     return "low"
 
 
@@ -188,7 +194,18 @@ def _is_simple_fast_request(
             and not (metadata.get("best_effort_filters") or {})
         )
 
-    if objective != "structured_posts":
+    if metadata.get("reasoning_effort"):
+        return False
+
+    if metadata.get("intent") in {
+        "research",
+        "verify_claim",
+        "reaction_tracking",
+        "source_discovery",
+    }:
+        return False
+
+    if objective not in {"structured_posts", "semantic_research"}:
         return False
 
     quality = metadata.get("quality") or {}
@@ -286,7 +303,7 @@ def resolve_plan(
         )
 
     if pinned_model:
-        desired = _smart_effort(objective)
+        desired = _smart_effort(objective, metadata.get("reasoning_effort"))
         validated = _validated_effort(pinned_model, desired, capabilities)
         notices: list[str] = []
         if validated is None and desired is not None:
@@ -331,7 +348,7 @@ def resolve_plan(
             route_reason="conservative_simple_request",
         )
 
-    desired_effort = _smart_effort(objective)
+    desired_effort = _smart_effort(objective, metadata.get("reasoning_effort"))
     effort = _validated_effort(routing_config.smart_model, desired_effort, capabilities)
     return RetrievalPlan(
         objective_mode=objective,
@@ -441,6 +458,13 @@ def should_escalate_to_smart(
     if quality.passed:
         return False
     if plan.initial_lane != "fast" or not plan.allow_smart_escalation:
+        return False
+    # A latest-by-handle request is a bounded timeline lookup.  An empty Fast
+    # result is useful evidence (there were no matching posts in that window),
+    # not a reason to spend another two model calls attempting semantic
+    # recovery.  Callers that genuinely need broader research use an explicit
+    # research/reaction intent and start in the Smart lane.
+    if plan.objective_mode == "latest_by_handle":
         return False
     minimum = max(
         routing_config.smart_escalation_min_remaining_seconds,
