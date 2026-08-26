@@ -1,4 +1,4 @@
-# X Retrieval Architecture (v0.2.1)
+# X Retrieval Architecture (v0.4.0)
 
 `x_retrieve` is the only public MCP retrieval tool. The gateway keeps model-dependent behavior behind one deterministic controller so model upgrades do not change the client contract.
 
@@ -22,7 +22,7 @@ controller cannot solve more simply. See [Agent Development Guardrails](agent-de
 
 ## Execution Lanes
 
-The v0.2.1 gateway organizes execution into a 4-stage bounded execution pipeline:
+The v0.4.0 gateway organizes execution into a 4-stage bounded execution pipeline:
 
 1. **Deterministic Lane (oEmbed-first)**:
    - For explicit X status URLs or 15-20 digit IDs, public oEmbed is executed first concurrently.

@@ -2,6 +2,18 @@
 
 All notable changes to this fork are documented here. Dates use `YYYY-MM-DD`.
 
+## 0.4.0 - 2026-08-26
+
+### Added
+
+- Default Smart Lane model upgraded to `grok-4.6` with multi-tier reasoning support (`low`, `medium`, `high`, `xhigh`). Daily searches default to `low` (~29s response).
+- Four-stage bounded execution budget with strict mathematical closure: Fast (10s) + Smart (120s) + Raw (50s) <= Total (180s).
+- Graceful degradation on stage timeout: partial posts and sources are returned with `isError: false` and `retrieval_status: "degraded"` (or `"empty"`) with structured warnings, preventing fatal tool call crashes in client agents.
+- Automatic routing for simple queries directly to Fast Lane (`grok-4.20-0309-non-reasoning`, 3-5s response) with seamless Smart escalation when quality gates fail.
+- Dynamic HTTP socket timeout binding in `xai_responses.py` (`GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS + 15.0`), eliminating magic hardcoded client timeouts.
+- Strict runtime environment variable sanitization via `_RUNTIME_ENV_ALLOWLIST` in `config.py`.
+- Architectural invariant specifications in `docs/agent-development-guardrails.md`.
+
 ## 0.3.0 - 2026-08-23
 
 ### Added

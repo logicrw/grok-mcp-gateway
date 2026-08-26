@@ -207,7 +207,7 @@ GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY: int = _env_int(
     "GROK_PROXY_RETRIEVE_OEMBED_CONCURRENCY", 3, minimum=1, maximum=10
 )
 
-# v0.2.1 Adaptive routing and execution lane configuration
+# v0.4.0 Adaptive routing and execution lane configuration
 GROK_PROXY_RETRIEVE_MODEL: str = (
     os.getenv("GROK_PROXY_RETRIEVE_MODEL")
     or os.getenv("GROK_PROXY_MCP_MODEL")
