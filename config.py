@@ -43,6 +43,8 @@ _RUNTIME_ENV_ALLOWLIST = frozenset(
         "GROK_PROXY_RETRIEVE_MODEL",
         "GROK_PROXY_MCP_MODEL",
         "GROK_PROXY_FAST_MODEL",
+        "GROK_PROXY_RETRIEVE_FAST_MODEL",
+        "GROK_PROXY_MCP_FAST_MODEL",
         "GROK_PROXY_RETRIEVE_RAW_MODEL",
         "GROK_PROXY_MCP_RAW_MODEL",
         "GROK_PROXY_ENABLE_AUTO_TIERING",
@@ -267,3 +269,22 @@ GROK_PROXY_RETRIEVE_CACHE_EXACT_TTL_SECONDS: int = _env_int(
 GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS: int = _env_int(
     "GROK_PROXY_RETRIEVE_CACHE_LATEST_TTL_SECONDS", 480, minimum=30, maximum=86_400
 )
+
+
+def validate_retrieval_budget() -> None:
+    worst_case_sum = (
+        GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS
+        + GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS
+        + GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS
+    )
+    if worst_case_sum > GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS:
+        raise ValueError(
+            f"Retrieval budget violation: Fast ({GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS}s) + "
+            f"Smart ({GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS}s) + "
+            f"Raw ({GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS}s) = {worst_case_sum}s, "
+            f"which exceeds GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS ({GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS}s). "
+            f"Stage timeouts must satisfy: Fast + Smart + Raw <= Total."
+        )
+
+
+validate_retrieval_budget()

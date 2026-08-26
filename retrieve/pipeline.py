@@ -383,10 +383,6 @@ async def _run_general_stages(
             record_route(lane="smart", objective_mode=plan.objective_mode, escalated=True)
             await _run_smart_escalation(payload, search_arguments, metadata, plan, search, budget)
         await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
-        if not payload.get("items") and not payload.get("sources"):
-            if isinstance(exc, StageTimeout):
-                return payload
-            raise exc
         return payload
 
     payload = assemble_payload(result, metadata, stage_name=stage_name)

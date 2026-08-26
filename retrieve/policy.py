@@ -35,7 +35,8 @@ class RoutingConfig:
     smart_max_turns: int = 3
     fast_stage_timeout_seconds: float = 10.0
 
-    smart_stage_timeout_seconds: float = 80.0
+    smart_stage_timeout_seconds: float = 120.0
+    raw_stage_timeout_seconds: float = 50.0
     smart_escalation_min_remaining_seconds: float = 35.0
     fallback_reserve_seconds: float = 8.0
     fast_max_handles: int = 2
@@ -53,6 +54,7 @@ def get_routing_config() -> RoutingConfig:
         smart_max_turns=config.GROK_PROXY_SMART_MAX_TURNS,
         fast_stage_timeout_seconds=config.GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS,
         smart_stage_timeout_seconds=config.GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS,
+        raw_stage_timeout_seconds=config.GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS,
         smart_escalation_min_remaining_seconds=config.GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS,
         fallback_reserve_seconds=config.GROK_PROXY_FALLBACK_RESERVE_SECONDS,
         fast_max_handles=2,
@@ -468,7 +470,7 @@ def should_escalate_to_smart(
         return False
     minimum = max(
         routing_config.smart_escalation_min_remaining_seconds,
-        routing_config.fallback_reserve_seconds + 20.0,
+        routing_config.raw_stage_timeout_seconds + routing_config.fallback_reserve_seconds + 10.0,
     )
     return remaining_seconds >= minimum
 

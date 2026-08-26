@@ -191,12 +191,15 @@ async def get_client() -> httpx.AsyncClient:
 
 
 
+_client_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
 def _client_creation_lock(loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
-    global _client_lock, _client_lock_loop
-    if _client_lock is None or _client_lock_loop is not loop:
-        _client_lock = asyncio.Lock()
-        _client_lock_loop = loop
-    return _client_lock
+    lock = _client_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _client_locks[loop] = lock
+    return lock
 
 
 async def aclose_client() -> None:
@@ -205,6 +208,7 @@ async def aclose_client() -> None:
         await _client.aclose()
     _client = None
     _client_loop = None
+    _client_locks.clear()
 
 
 async def _headers(*, force_refresh: bool = False, stale_access_token: Optional[str] = None) -> tuple[Dict[str, str], str, str]:

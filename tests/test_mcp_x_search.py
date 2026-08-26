@@ -439,13 +439,13 @@ def test_tools_call_sanitizes_upstream_error(monkeypatch):
     )
 
     text = response["result"]["content"][0]["text"]
-    assert response["result"]["isError"] is True
+    assert response["result"]["isError"] is False
     assert "super-secret" not in text
     assert "Bearer abc" not in text
     structured = json.loads(text)
     assert structured["schema_version"] == "x_retrieve.v1"
-    assert structured["retrieval_status"] == "error"
-    assert structured["warnings"][0].startswith("x_retrieve failed:")
+    assert structured["retrieval_status"] == "empty"
+    assert any("upstream status 500" in w for w in structured["warnings"])
 
 
 def test_xai_responses_post_sanitizes_upstream_body(monkeypatch):

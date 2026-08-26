@@ -148,3 +148,16 @@ def test_unsupported_model_does_not_receive_reasoning_effort():
     )
 
     assert "_reasoning_effort" not in seen
+
+
+def test_validate_retrieval_budget_rejects_violating_configuration(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS", 100.0)
+    monkeypatch.setattr(config, "GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(config, "GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(config, "GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS", 30.0)
+
+    with pytest.raises(ValueError, match="Retrieval budget violation"):
+        config.validate_retrieval_budget()
+

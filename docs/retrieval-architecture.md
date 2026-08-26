@@ -32,12 +32,12 @@ The v0.4.0 gateway organizes execution into a 4-stage bounded execution pipeline
 
 2. **Fast Lane (`grok-4.20-0309-non-reasoning`)**:
    - Conservative routing for simple `latest_by_handle` requests and simple `structured_posts` without heavy quality requirements or reasoning markers.
-   - Constrained by native Structured Outputs (`text.format.json_schema`), `max_turns=1~2`, and short stage timeout (15s).
+   - Constrained by native Structured Outputs (`text.format.json_schema`), `max_turns=1~2`, and short stage timeout (10s).
    - Forbids reasoning effort parameters (non-reasoning model).
 
 3. **Smart Lane (`grok-4.6` default, `grok-4.5` fallback compatibility)**:
    - Default stable lane for complex semantic research, source discovery, reaction tracking, and claim verification.
-   - Supports validated `reasoning.effort` (`low`, `medium`, `high`, `xhigh`) on grok-4.6. Daily Smart objectives default to `medium`; `verify_claim` defaults to `high`. Explicit `xhigh` is forwarded. grok-4.5 remains `low`/`medium`/`high`.
+   - Supports validated `reasoning.effort` (`low`, `medium`, `high`, `xhigh`) on grok-4.6. Daily Smart objectives default to `low` (~29s); `verify_claim` defaults to `high`. Explicit `xhigh` is forwarded. grok-4.5 remains `low`/`medium`/`high`.
    - Receives automatic escalations from Fast Lane when Fast Lane results fail quality gates and remaining budget >= 35s.
 
 4. **Raw Expansion Lane (`grok-composer-2.5-fast`)**:
@@ -72,7 +72,7 @@ The v0.4.0 gateway organizes execution into a 4-stage bounded execution pipeline
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | 35.0 | Minimum remaining budget required for Smart escalation |
 | `GROK_PROXY_FALLBACK_RESERVE_SECONDS` | 8.0 | Safety reserve time for clean finalization |
 | `GROK_PROXY_FAST_MAX_TURNS` | 2 | Tool turn limit for Fast Lane |
-| `GROK_PROXY_SMART_MAX_TURNS` | 5 | Tool turn limit for Smart Lane |
+| `GROK_PROXY_SMART_MAX_TURNS` | 3 | Tool turn limit for Smart Lane |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | true | Enable Fast -> Smart adaptive routing |
 | `GROK_PROXY_STORE_RESPONSES` | false | Explicit `store: false` for independent retrieval requests |
 

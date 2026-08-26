@@ -318,3 +318,22 @@ def test_all_search_stages_failure_returns_graceful_empty_payload(monkeypatch):
     assert structured["items"] == []
     assert any("smart_extract failed" in w for w in structured["warnings"])
 
+
+def test_network_disconnect_returns_graceful_empty_payload(monkeypatch):
+    import httpx
+
+    async def disconnected_search(arguments):
+        raise httpx.ConnectError("Network unreachable")
+
+    monkeypatch.setattr(x_search, "_call_x_search_result", disconnected_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
+
+    response = _call({"query": "disconnected query", "intent": "research"})
+
+    assert response["result"]["isError"] is False
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "empty"
+    assert structured["items"] == []
+    assert any("Network unreachable" in w for w in structured["warnings"])
+
+

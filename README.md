@@ -279,7 +279,7 @@ Any AI agent or maintainer making architectural changes to this gateway must fol
 
 1. **Physics Over Magic**: Measure real model reasoning latency before changing timeouts. Never artificially truncate timeouts to hide slow responses.
 2. **Worst-Case Budget Guarantee**: Stage timeouts must satisfy $10\text{s (Fast)} + 120\text{s (Smart)} + 50\text{s (Raw)} \le 180\text{s (Total)}$. Never starve fallback stages.
-3. **Client Ceiling Invariance**: Deliver standard queries within 35s to guarantee full compatibility with 60s hard client timeouts.
+3. **Client Ceiling Awareness**: Deliver standard queries within 35s to guarantee full compatibility with 60s clients; explicitly declare deep reasoning requirements for high/xhigh.
 4. **Explicit Over Implicit**: Pass explicit stage timeouts everywhere. Never create ambiguous global fallback ceilings.
 5. **Protect Stateless Boundaries**: The gateway is a stateless proxy. Never add persistent DBs, vectors, or learned routing. Keep `GROK_PROXY_RETRIEVE_CACHE=false` clean.
 6. **Triple Verification Gates**: Pass `basedpyright` (0 errors), `pytest` (263+ green), and live `launchctl kickstart` health/MCP smoke tests.
