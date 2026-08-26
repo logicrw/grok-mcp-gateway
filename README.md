@@ -245,11 +245,11 @@ All gateway settings can be customized via environment variables or `.env`:
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | Raw expansion candidate deep-dive model. |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | `true` | Enable automated 4-tier adaptive routing & escalation. |
 | `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `10.0` | Timeout ceiling for Fast Lane requests. |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `80.0` | Timeout ceiling for Smart Lane requests. |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `120.0` | Timeout ceiling for Smart Lane requests. |
 | `GROK_PROXY_SMART_REASONING_EFFORT` | `""` (`low`) | Default reasoning effort for Smart Lane (`low`, `medium`, `high`, `xhigh`). `low` defaults to ~29s response. |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | `35.0` | Minimum remaining budget required to trigger Smart escalation. |
-| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | Hard total deadline for any `x_retrieve` invocation. |
-| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `30.0` | Maximum time reserved for best-effort raw expansion. |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `180.0` | Hard total deadline for any `x_retrieve` invocation. |
+| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `50.0` | Maximum time reserved for best-effort raw expansion. |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Maximum tool iterations for Fast Lane. |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Maximum tool iterations for Smart Lane. |
 | `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | Concurrency permit limit for upstream xAI calls (legacy `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY` still honored). One permit covers all tier stages of a request. |
@@ -273,6 +273,20 @@ All gateway settings can be customized via environment variables or `.env`:
 
 ---
 
+## Agent Development & Modification Guardrails
+
+Any AI agent or maintainer making architectural changes to this gateway must follow the immutable invariants defined in [Agent Development Guardrails](docs/agent-development-guardrails.md):
+
+1. **Physics Over Magic**: Measure real model reasoning latency before changing timeouts. Never artificially truncate timeouts to hide slow responses.
+2. **Worst-Case Budget Guarantee**: Stage timeouts must satisfy $10\text{s (Fast)} + 120\text{s (Smart)} + 50\text{s (Raw)} \le 180\text{s (Total)}$. Never starve fallback stages.
+3. **Client Ceiling Invariance**: Deliver standard queries within 35s to guarantee full compatibility with 60s hard client timeouts.
+4. **Explicit Over Implicit**: Pass explicit stage timeouts everywhere. Never create ambiguous global fallback ceilings.
+5. **Protect Stateless Boundaries**: The gateway is a stateless proxy. Never add persistent DBs, vectors, or learned routing. Keep `GROK_PROXY_RETRIEVE_CACHE=false` clean.
+6. **Triple Verification Gates**: Pass `basedpyright` (0 errors), `pytest` (263+ green), and live `launchctl kickstart` health/MCP smoke tests.
+
+---
+
 ## License
 
 MIT License.
+

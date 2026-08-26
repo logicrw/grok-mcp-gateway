@@ -184,7 +184,8 @@ async def get_client() -> httpx.AsyncClient:
                     await old_client.aclose()
                 except RuntimeError:
                     logger.debug("Could not close xAI Responses client from a previous event loop.")
-            _client = httpx.AsyncClient(timeout=httpx.Timeout(90.0))
+            http_timeout = max(config.GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS + 15.0, 60.0)
+            _client = httpx.AsyncClient(timeout=httpx.Timeout(http_timeout))
             _client_loop = current_loop
     return _client
 

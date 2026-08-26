@@ -299,3 +299,22 @@ def test_smart_lane_failure_rescued_by_raw_expansion(monkeypatch):
     assert structured["items"][0]["text"] == "rescued by raw"
     assert any(s["name"] == "smart_extract" and s["status"] == "failed" for s in structured["retrieval_stages"])
     assert any(s["name"] == "raw_expansion" and s["status"] == "success" for s in structured["retrieval_stages"])
+
+
+def test_all_search_stages_failure_returns_graceful_empty_payload(monkeypatch):
+    async def failing_search(arguments):
+        from retrieve.stages import StageTimeout
+
+        raise StageTimeout("stage")
+
+    monkeypatch.setattr(x_search, "_call_x_search_result", failing_search)
+    monkeypatch.setattr(pipeline, "fetch_oembed_posts", _empty_oembed)
+
+    response = _call({"query": "failing query", "intent": "research"})
+
+    assert response["result"]["isError"] is False
+    structured = response["result"]["structuredContent"]
+    assert structured["retrieval_status"] == "empty"
+    assert structured["items"] == []
+    assert any("smart_extract failed" in w for w in structured["warnings"])
+

@@ -245,11 +245,11 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 | `GROK_PROXY_RETRIEVE_RAW_MODEL` | `grok-composer-2.5-fast` | Raw Expansion 候选深挖兜底模型。 |
 | `GROK_PROXY_ENABLE_AUTO_TIERING` | `true` | 是否启用四段式自适应分流与质量门禁升级。 |
 | `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | `10.0` | Fast Lane 阶段超时上限。 |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `80.0` | Smart Lane 阶段超时上限。 |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | `120.0` | Smart Lane 阶段超时上限。 |
 | `GROK_PROXY_SMART_REASONING_EFFORT` | `""` (`low`) | Smart Lane 默认推理档位（`low`、`medium`、`high`、`xhigh`）。`low` 档位实现 ~29 秒极速返回。 |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | `35.0` | 触发 Smart 升级所需的最低剩余时间预算。 |
-| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `120.0` | 单次 `x_retrieve` 总执行超时上限。 |
-| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `30.0` | raw 扩展的最大预留时长。 |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | `180.0` | 单次 `x_retrieve` 总执行超时上限。 |
+| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | `50.0` | raw 扩展的最大预留时长。 |
 | `GROK_PROXY_FAST_MAX_TURNS` | `2` | Fast Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_SMART_MAX_TURNS` | `3` | Smart Lane 单次请求最大工具调用轮数。 |
 | `GROK_PROXY_RETRIEVE_CONCURRENCY` | `3` | 上游 xAI 请求的并发许可上限（兼容旧名 `GROK_PROXY_MCP_X_SEARCH_CONCURRENCY`）。单个请求的全部层级阶段共用一个许可。 |
@@ -273,6 +273,20 @@ AUTH_REQUIRED: No local xAI OAuth credentials are available. Run `/path/to/.venv
 
 ---
 
+## Agent 开发与架构改造守则
+
+任何 AI Agent（或人类维护者）对本网关进行代码修改或架构演进时，必须严格遵守 [Agent 开发与架构改造守则](docs/agent-development-guardrails.md) 中定义的六大硬性铁律：
+
+1. **物理耗时客观性**：调大模型前必须实测真实思维链耗时分布，严禁靠砍超时“掩盖问题”；
+2. **最坏情况预算完备**：各跑段硬超时之和必须闭环：$10\text{s (Fast)} + 120\text{s (Smart)} + 50\text{s (Raw 兜底)} \le 180\text{s (总限时)}$，绝不挤压兜底预算；
+3. **客户端 60 秒红线免疫**：日常查询必须收敛在 35 秒内返回，天然免疫任何第三方 Agent 客户端的 60s 硬超时；
+4. **显式优于隐式**：各阶段必须显式传参超时，彻底消灭全局隐式阶段兜底（如历史遗留的 60s 陷阱）；
+5. **死守无状态边界**：本网关是透明代理，严禁引入复杂数据库与向量检索；永久保障 `GROK_PROXY_RETRIEVE_CACHE=false` 纯无状态通道；
+6. **全量闭环三道门禁**：必须通过 `basedpyright`（0 error）、`pytest`（263+ 测试全绿）、以及 `launchctl kickstart` 真实运行态深层健康检查与 MCP 检索验证。
+
+---
+
 ## 开源协议
 
 MIT License.
+

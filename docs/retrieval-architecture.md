@@ -18,7 +18,7 @@ they do not become a gateway backend.
 Persistent databases or caches, learned routing, in-gateway multi-query
 planning, vector stores, and multi-agent research frameworks are also non-goals
 until repeated production traces show a specific failure that the current
-controller cannot solve more simply.
+controller cannot solve more simply. See [Agent Development Guardrails](agent-development-guardrails.md) for mandatory engineering invariants.
 
 ## Execution Lanes
 
@@ -65,10 +65,10 @@ The v0.2.1 gateway organizes execution into a 4-stage bounded execution pipeline
 
 | Setting | Default | Description |
 | --- | ---: | --- |
-| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | 120.0 | Total request deadline |
-| `GROK_PROXY_RETRIEVE_STAGE_TIMEOUT_SECONDS` | 80.0 | Maximum per-stage ceiling |
+| `GROK_PROXY_RETRIEVE_TOTAL_TIMEOUT_SECONDS` | 180.0 | Total request deadline |
 | `GROK_PROXY_FAST_STAGE_TIMEOUT_SECONDS` | 10.0 | Fast lane stage ceiling |
-| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | 80.0 | Smart lane stage ceiling |
+| `GROK_PROXY_SMART_STAGE_TIMEOUT_SECONDS` | 120.0 | Smart lane stage ceiling |
+| `GROK_PROXY_RAW_STAGE_TIMEOUT_SECONDS` | 50.0 | Raw expansion stage ceiling |
 | `GROK_PROXY_SMART_ESCALATION_MIN_REMAINING_SECONDS` | 35.0 | Minimum remaining budget required for Smart escalation |
 | `GROK_PROXY_FALLBACK_RESERVE_SECONDS` | 8.0 | Safety reserve time for clean finalization |
 | `GROK_PROXY_FAST_MAX_TURNS` | 2 | Tool turn limit for Fast Lane |

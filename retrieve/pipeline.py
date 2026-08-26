@@ -50,7 +50,7 @@ from retrieve.schema import (
     SCHEMA_VERSION,
     SOURCE_LIMIT,
 )
-from retrieve.stages import SearchCaller, StageOverloaded, run_search_stage
+from retrieve.stages import SearchCaller, StageOverloaded, StageTimeout, run_search_stage
 from retrieve import x_search
 from x_oembed import OEMBED_TIMEOUT_SECONDS, fetch_oembed_posts
 
@@ -384,6 +384,8 @@ async def _run_general_stages(
             await _run_smart_escalation(payload, search_arguments, metadata, plan, search, budget)
         await _maybe_run_raw_expansion(payload, search_arguments, metadata, search, budget)
         if not payload.get("items") and not payload.get("sources"):
+            if isinstance(exc, StageTimeout):
+                return payload
             raise exc
         return payload
 
